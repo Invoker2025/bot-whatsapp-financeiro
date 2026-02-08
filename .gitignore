@@ -1,0 +1,17 @@
+# Não enviar secrets para o GitHub
+.env
+*.env
+
+# Node.js
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+audios/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
