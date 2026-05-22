@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 from openai import OpenAI
 import tempfile
@@ -8,7 +8,9 @@ from datetime import datetime
 from ai_parser import parse_message
 from api_client import save_to_api, get_month_summary
 from state import get_pending, set_pending, clear_pending
-from config import OPENAI_API_KEY
+from config import OPENAI_API_KEY, WHATSAPP_VERIFY_TOKEN
+from twilio_whatsapp import build_twiml_message, normalize_twilio_whatsapp_id, verify_twilio_signature
+from whatsapp_cloud import extract_text_messages, send_whatsapp_text, verify_signature
 
 # ======================================================
 # APP + OPENAI
@@ -257,6 +259,78 @@ def receive_message(msg: Message):
 # ======================================================
 # ÁUDIO (WHATSAPP / WHISPER)
 # ======================================================
+
+
+# ======================================================
+# WHATSAPP CLOUD API
+# ======================================================
+
+
+@app.get("/webhook")
+def verify_whatsapp_webhook(
+    hub_mode: str = Query("", alias="hub.mode"),
+    hub_challenge: str = Query("", alias="hub.challenge"),
+    hub_verify_token: str = Query("", alias="hub.verify_token"),
+):
+    if (
+        hub_mode == "subscribe"
+        and WHATSAPP_VERIFY_TOKEN
+        and hub_verify_token == WHATSAPP_VERIFY_TOKEN
+    ):
+        return Response(content=hub_challenge, media_type="text/plain")
+
+    raise HTTPException(status_code=403, detail="Invalid verify token")
+
+
+def process_whatsapp_cloud_text(user_id: str, text: str):
+    response = receive_message(Message(user_id=user_id, text=text))
+    reply = response.get("reply") if isinstance(response, dict) else None
+    if reply:
+        send_whatsapp_text(user_id, reply)
+
+
+@app.post("/webhook")
+async def receive_whatsapp_webhook(request: Request, background_tasks: BackgroundTasks):
+    raw_body = await request.body()
+    signature = request.headers.get("x-hub-signature-256")
+
+    if not verify_signature(raw_body, signature):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    payload = await request.json()
+    for user_id, text in extract_text_messages(payload):
+        background_tasks.add_task(process_whatsapp_cloud_text, user_id, text)
+
+    return {"status": "ok"}
+
+
+# ======================================================
+# TWILIO WHATSAPP
+# ======================================================
+
+
+@app.post("/twilio/whatsapp")
+async def receive_twilio_whatsapp(request: Request):
+    form = await request.form()
+    params = {key: str(value) for key, value in form.items()}
+    signature = request.headers.get("x-twilio-signature")
+
+    if not verify_twilio_signature(str(request.url), params, signature):
+        raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
+    user_id = normalize_twilio_whatsapp_id(params.get("From", ""))
+    text = (params.get("Body") or "").strip()
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing sender")
+
+    if not text:
+        reply = "Envie uma mensagem de texto com o gasto. Ex: gastei 25 no almoco pix"
+    else:
+        response = receive_message(Message(user_id=user_id, text=text))
+        reply = response.get("reply") if isinstance(response, dict) else "Processado."
+
+    return Response(content=build_twiml_message(reply), media_type="application/xml")
 
 
 @app.post("/audio")
