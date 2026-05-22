@@ -6,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 
 from config import PLANILHA_API_URL
 from db import get_month_summary_db, save_transaction
+from google_sheets_client import append_transaction
 
 
 def _dashboard_api_base() -> str:
@@ -19,6 +20,12 @@ def _dashboard_api_base() -> str:
 
 
 def _save_transaction(data: Dict[str, Any]) -> None:
+    try:
+        if append_transaction(data):
+            print("Transacao salva no Google Sheets.")
+    except Exception as exc:
+        print(f"Falha ao salvar no Google Sheets: {exc}")
+
     api_base = _dashboard_api_base()
 
     if api_base:

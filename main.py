@@ -7,6 +7,7 @@ from datetime import datetime
 
 from ai_parser import parse_message
 from api_client import save_to_api, get_month_summary
+from google_sheets_client import ensure_finance_sheet, is_configured as google_sheet_configured
 from state import get_pending, set_pending, clear_pending
 from config import OPENAI_API_KEY, WHATSAPP_VERIFY_TOKEN
 from twilio_whatsapp import build_twiml_message, normalize_twilio_whatsapp_id, verify_twilio_signature
@@ -365,5 +366,15 @@ def root():
     return {
         "status": "ok",
         "message": "Bot WhatsApp + Planilha Financeira",
-        "version": "2.0"
+        "version": "2.0",
+        "google_sheet_configured": google_sheet_configured(),
     }
+
+
+@app.post("/sheet/setup")
+def setup_sheet():
+    if not google_sheet_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
+
+    ensure_finance_sheet()
+    return {"status": "ok", "message": "Planilha configurada"}

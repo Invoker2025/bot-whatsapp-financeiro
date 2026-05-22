@@ -10,6 +10,13 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 # https://seu-dashboard.onrender.com/api
 PLANILHA_API_URL = os.getenv("PLANILHA_API_URL", "").rstrip("/")
 
+# Google Sheets settings. Create/share a sheet and paste its ID here.
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
+GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv(
+    "GOOGLE_SERVICE_ACCOUNT_FILE",
+    os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "/etc/secrets/google-creds.json"),
+)
+
 # WhatsApp Cloud API settings.
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "")
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "")
