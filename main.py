@@ -7,7 +7,11 @@ from datetime import datetime
 
 from ai_parser import parse_message
 from api_client import save_to_api, get_month_summary
-from google_sheets_client import ensure_finance_sheet, is_configured as google_sheet_configured
+from google_sheets_client import (
+    ensure_finance_sheet,
+    is_configured as google_sheet_configured,
+    reset_finance_template,
+)
 from state import get_pending, set_pending, clear_pending
 from config import OPENAI_API_KEY, WHATSAPP_VERIFY_TOKEN
 from twilio_whatsapp import build_twiml_message, normalize_twilio_whatsapp_id, verify_twilio_signature
@@ -383,3 +387,20 @@ def setup_sheet():
         raise HTTPException(status_code=500, detail=str(exc))
 
     return {"status": "ok", "message": "Planilha configurada"}
+
+
+@app.api_route("/sheet/reset-template", methods=["GET", "POST"])
+def reset_sheet_template():
+    if not google_sheet_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
+
+    try:
+        reset_finance_template()
+    except Exception as exc:
+        print(f"Erro ao resetar template da planilha: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "status": "ok",
+        "message": "Template limpo. Abas antigas foram apagadas.",
+    }

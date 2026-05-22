@@ -50,6 +50,15 @@ TAB_DEFINITIONS = {
     "Dividas": DIVIDAS_HEADERS,
 }
 
+LEGACY_TABS = {
+    "Dashboard",
+    "LANÇAMENTOS",
+    "LANCAMENTOS",
+    "APOIO",
+    "MAPEAMENTO",
+    "CONFIG",
+}
+
 
 def is_configured() -> bool:
     return bool(GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_FILE)
@@ -126,6 +135,67 @@ def ensure_finance_sheet() -> None:
     for title, headers in TAB_DEFINITIONS.items():
         _worksheet(spreadsheet, title, headers)
     update_summary()
+
+
+def reset_finance_template(delete_legacy: bool = True) -> None:
+    """
+    Prepara uma planilha limpa para o bot.
+
+    Abas fora do template do bot sao apagadas. As abas usadas pelo bot sao
+    limpas e recriadas com cabecalhos.
+    """
+    if not is_configured():
+        return
+
+    spreadsheet = _spreadsheet()
+
+    for title, headers in TAB_DEFINITIONS.items():
+        worksheet = _worksheet(spreadsheet, title, headers)
+
+    if delete_legacy:
+        _delete_non_template_tabs(spreadsheet)
+
+    for title, headers in TAB_DEFINITIONS.items():
+        worksheet = _worksheet(spreadsheet, title, headers)
+        worksheet.clear()
+        if headers:
+            worksheet.update([headers], "A1", value_input_option="USER_ENTERED")
+            _format_header(spreadsheet, worksheet.id, len(headers))
+
+    _seed_template_rows(spreadsheet)
+    update_summary(spreadsheet)
+
+
+def _delete_non_template_tabs(spreadsheet) -> None:
+    for worksheet in spreadsheet.worksheets():
+        if worksheet.title in TAB_DEFINITIONS:
+            continue
+
+        spreadsheet.del_worksheet(worksheet)
+
+
+def _seed_template_rows(spreadsheet) -> None:
+    spreadsheet.worksheet("Categorias").append_rows(
+        [
+            ["Alimentação", 700, 0, "=B2-C2"],
+            ["Transporte", 400, 0, "=B3-C3"],
+            ["Lazer", 500, 0, "=B4-C4"],
+            ["Moradia", 2000, 0, "=B5-C5"],
+            ["Assinaturas", 100, 0, "=B6-C6"],
+            ["Saúde", 300, 0, "=B7-C7"],
+            ["Shopping", 300, 0, "=B8-C8"],
+            ["Outros", 300, 0, "=B9-C9"],
+        ],
+        value_input_option="USER_ENTERED",
+    )
+
+    spreadsheet.worksheet("Metas").append_rows(
+        [
+            ["Reserva de Emergência", 0, "pendente", 0],
+            ["Viagem de fim de ano", 0, "pendente", 0],
+        ],
+        value_input_option="USER_ENTERED",
+    )
 
 
 def append_transaction(data: Dict[str, Any]) -> bool:
