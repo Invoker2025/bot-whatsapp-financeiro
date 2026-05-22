@@ -371,7 +371,7 @@ def root():
     }
 
 
-@app.post("/sheet/setup")
+@app.api_route("/sheet/setup", methods=["GET", "POST"])
 def setup_sheet():
     if not google_sheet_configured():
         raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
