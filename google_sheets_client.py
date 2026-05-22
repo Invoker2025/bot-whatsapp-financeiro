@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 import gspread
+from gspread.utils import a1_range_to_grid_range
 
 from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEET_ID
 
@@ -39,6 +40,7 @@ METAS_HEADERS = ["Descricao", "Valor", "Status", "Valor Atual"]
 DIVIDAS_HEADERS = ["Descricao", "Data", "Parcela", "Valor", "Status"]
 
 TAB_DEFINITIONS = {
+    "Dashboard": [],
     "Resumo": [],
     "Transacoes": TRANSACTIONS_HEADERS,
     "Receitas": RECEITAS_HEADERS,
@@ -59,6 +61,23 @@ LEGACY_TABS = {
     "CONFIG",
 }
 
+COLORS = {
+    "green": {"red": 0.42, "green": 0.66, "blue": 0.43},
+    "green_dark": {"red": 0.13, "green": 0.50, "blue": 0.27},
+    "teal": {"red": 0.33, "green": 0.61, "blue": 0.64},
+    "blue": {"red": 0.39, "green": 0.64, "blue": 0.84},
+    "yellow": {"red": 1.00, "green": 0.77, "blue": 0.25},
+    "orange": {"red": 1.00, "green": 0.61, "blue": 0.42},
+    "red": {"red": 1.00, "green": 0.39, "blue": 0.42},
+    "pale_green": {"red": 0.85, "green": 0.96, "blue": 0.88},
+    "pale_blue": {"red": 0.86, "green": 0.93, "blue": 0.98},
+    "pale_yellow": {"red": 1.00, "green": 0.95, "blue": 0.78},
+    "pale_orange": {"red": 1.00, "green": 0.91, "blue": 0.86},
+    "pale_red": {"red": 1.00, "green": 0.88, "blue": 0.89},
+    "white": {"red": 1, "green": 1, "blue": 1},
+    "dark": {"red": 0.05, "green": 0.09, "blue": 0.16},
+}
+
 
 def is_configured() -> bool:
     return bool(GOOGLE_SHEET_ID and GOOGLE_SERVICE_ACCOUNT_FILE)
@@ -76,7 +95,9 @@ def _worksheet(spreadsheet, title: str, headers: List[str]):
     try:
         worksheet = spreadsheet.worksheet(title)
     except gspread.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=title, rows=200, cols=max(len(headers), 8))
+        rows = 120 if title == "Dashboard" else 200
+        cols = 18 if title == "Dashboard" else max(len(headers), 8)
+        worksheet = spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
 
     if headers:
         current_headers = worksheet.row_values(1)
@@ -127,6 +148,160 @@ def _format_header(spreadsheet, sheet_id: int, column_count: int) -> None:
     )
 
 
+def _format_a1(
+    spreadsheet,
+    sheet_id: int,
+    a1_range: str,
+    background: str,
+    foreground: str = "dark",
+    bold: bool = False,
+    align: str = "CENTER",
+    font_size: int = None,
+) -> Dict[str, Any]:
+    text_format = {
+        "foregroundColor": COLORS[foreground],
+        "bold": bold,
+    }
+    if font_size:
+        text_format["fontSize"] = font_size
+
+    return {
+        "repeatCell": {
+            "range": a1_range_to_grid_range(a1_range, sheet_id),
+            "cell": {
+                "userEnteredFormat": {
+                    "backgroundColor": COLORS[background],
+                    "textFormat": text_format,
+                    "horizontalAlignment": align,
+                    "verticalAlignment": "MIDDLE",
+                    "wrapStrategy": "WRAP",
+                }
+            },
+            "fields": (
+                "userEnteredFormat(backgroundColor,textFormat,"
+                "horizontalAlignment,verticalAlignment,wrapStrategy)"
+            ),
+        }
+    }
+
+
+def _format_borders(sheet_id: int, a1_range: str) -> Dict[str, Any]:
+    border = {
+        "style": "SOLID",
+        "width": 1,
+        "color": {"red": 0.78, "green": 0.82, "blue": 0.87},
+    }
+    return {
+        "updateBorders": {
+            "range": a1_range_to_grid_range(a1_range, sheet_id),
+            "top": border,
+            "bottom": border,
+            "left": border,
+            "right": border,
+            "innerHorizontal": border,
+            "innerVertical": border,
+        }
+    }
+
+
+def _set_column_width(sheet_id: int, start: int, end: int, width: int) -> Dict[str, Any]:
+    return {
+        "updateDimensionProperties": {
+            "range": {
+                "sheetId": sheet_id,
+                "dimension": "COLUMNS",
+                "startIndex": start,
+                "endIndex": end,
+            },
+            "properties": {"pixelSize": width},
+            "fields": "pixelSize",
+        }
+    }
+
+
+def _build_dashboard_layout(spreadsheet) -> None:
+    dashboard = _worksheet(spreadsheet, "Dashboard", [])
+    dashboard.clear()
+
+    dashboard.update(
+        [
+            ["PLANILHA IA - FINANÇAS"],
+            ["Dashboard financeiro automático"],
+            ["", "", "", "", "", "", "", datetime.now().strftime("%B/%Y"), "", "", "", "", "", "", "Resumo"],
+            [],
+            ["", "Receitas", "", "", "", "Metas", "", "", "", "Dívidas", "", "", "", "", "Este Mês"],
+            ["", "Descrição", "Valor", "", "", "Descrição", "Valor", "Status", "", "Descrição", "Data", "Parcela", "Valor", "Status", "Entradas", 0],
+            ["", "Sem receitas", 0, "", "", "Reserva de Emergência", 0, "pendente", "", "Sem dívidas", "", "", 0, "pendente", "Contas", 0],
+            ["", "", "", "", "", "Viagem de fim de ano", 0, "pendente", "", "", "", "", "", "", "Despesas", 0],
+            ["", "Total", 0, "", "", "Total", 0, "", "", "Total", "", "", 0, "", "Parceladas", 0],
+            [],
+            ["", "Contas", "", "", "", "", "", "", "", "Categorias", "", "", "", "", "Saldo", 0],
+            ["", "Descrição", "Data", "Categoria", "Valor", "Status", "", "", "", "Categoria", "Orçamento", "Real Gasto", "Sobra", "", "Orçamento", 0],
+            ["", "Sem contas", "", "", 0, "pendente", "", "", "", "Moradia", 2200, 0, 2200, "", "Gasto", 0],
+            ["", "", "", "", "", "", "", "", "", "Alimentação", 600, 0, 600, "", "Sobra", 0],
+            ["", "Total", "", "", 0, "", "", "", "", "Mercado", 600, 0, 600],
+            ["", "", "", "", "", "", "", "", "", "Transporte", 300, 0, 300],
+            ["", "Despesas", "", "", "", "", "", "", "", "Lazer", 200, 0, 200],
+            ["", "Descrição", "Data", "Forma", "Categoria", "Valor", "", "", "", "Saúde", 200, 0, 200],
+            ["", "Sem despesas", "", "", "", 0, "", "", "", "Shopping", 200, 0, 200],
+            ["", "", "", "", "", "", "", "", "", "Outros", 300, 0, 300],
+            ["", "Total", "", "", "", 0, "", "", "", "Total", 4600, 0, 4600],
+            [],
+            ["", "", "", "", "", "", "", "", "", "Parceladas", "", "", ""],
+            ["", "", "", "", "", "", "", "", "", "Descrição", "Data", "Categoria", "Valor"],
+            ["", "", "", "", "", "", "", "", "", "Sem parcelas", "", "", 0],
+            ["", "", "", "", "", "", "", "", "", "Total", "", "", 0],
+        ],
+        "A1",
+        value_input_option="USER_ENTERED",
+    )
+
+    requests = [
+        {
+            "updateSheetProperties": {
+                "properties": {
+                    "sheetId": dashboard.id,
+                    "gridProperties": {
+                        "frozenRowCount": 3,
+                        "hideGridlines": True,
+                    },
+                },
+                "fields": "gridProperties(frozenRowCount,hideGridlines)",
+            }
+        },
+        _set_column_width(dashboard.id, 0, 1, 24),
+        _set_column_width(dashboard.id, 1, 14, 95),
+        _set_column_width(dashboard.id, 14, 16, 115),
+        _format_a1(spreadsheet, dashboard.id, "A1:Q1", "white", "dark", True, "CENTER", 18),
+        _format_a1(spreadsheet, dashboard.id, "A2:Q2", "white", "green_dark", True, "CENTER", 11),
+        _format_a1(spreadsheet, dashboard.id, "B5:C5", "green", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "F5:H5", "teal", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "J5:N5", "yellow", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "B11:F11", "blue", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "B17:F17", "orange", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "J11:M11", "orange", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "J23:M23", "red", "white", True),
+        _format_a1(spreadsheet, dashboard.id, "O5:P5", "pale_yellow", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "O11:P11", "pale_green", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "B6:C6", "pale_green", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "F6:H6", "pale_blue", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "J6:N6", "pale_yellow", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "B12:F12", "pale_blue", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "B18:F18", "pale_orange", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "J12:M12", "pale_orange", "dark", True),
+        _format_a1(spreadsheet, dashboard.id, "J24:M24", "pale_red", "dark", True),
+        _format_borders(dashboard.id, "B5:C9"),
+        _format_borders(dashboard.id, "F5:H9"),
+        _format_borders(dashboard.id, "J5:N9"),
+        _format_borders(dashboard.id, "B11:F15"),
+        _format_borders(dashboard.id, "B17:F21"),
+        _format_borders(dashboard.id, "J11:M21"),
+        _format_borders(dashboard.id, "J23:M26"),
+        _format_borders(dashboard.id, "O5:P15"),
+    ]
+    spreadsheet.batch_update({"requests": requests})
+
+
 def ensure_finance_sheet() -> None:
     if not is_configured():
         return
@@ -134,6 +309,9 @@ def ensure_finance_sheet() -> None:
     spreadsheet = _spreadsheet()
     for title, headers in TAB_DEFINITIONS.items():
         _worksheet(spreadsheet, title, headers)
+    dashboard = _worksheet(spreadsheet, "Dashboard", [])
+    if dashboard.acell("A1").value != "PLANILHA IA - FINANÇAS":
+        _build_dashboard_layout(spreadsheet)
     update_summary()
 
 
@@ -163,6 +341,7 @@ def reset_finance_template(delete_legacy: bool = True) -> None:
             _format_header(spreadsheet, worksheet.id, len(headers))
 
     _seed_template_rows(spreadsheet)
+    _build_dashboard_layout(spreadsheet)
     update_summary(spreadsheet)
 
 
@@ -315,6 +494,8 @@ def update_summary(spreadsheet=None) -> None:
             categorias[categoria] = categorias.get(categoria, 0.0) + valor
 
     saldo = entradas - despesas - contas
+    _update_category_sheet(spreadsheet, categorias)
+    category_rows = _get_category_rows(spreadsheet)
     resumo.clear()
     resumo.update(
         [
@@ -326,7 +507,7 @@ def update_summary(spreadsheet=None) -> None:
             ["Saldo", saldo],
             [],
             ["Categorias", "Real Gasto"],
-            *[[categoria, valor] for categoria, valor in sorted(categorias.items())],
+            *[[row["categoria"], row["real"]] for row in category_rows],
         ],
         "A1",
         value_input_option="USER_ENTERED",
@@ -360,6 +541,185 @@ def update_summary(spreadsheet=None) -> None:
             ]
         }
     )
+    _update_dashboard(
+        spreadsheet,
+        {
+            "entradas": entradas,
+            "contas": contas,
+            "despesas": despesas,
+            "parceladas": parceladas,
+            "saldo": saldo,
+            "orcamento": sum(row["orcamento"] for row in category_rows),
+            "categorias": category_rows,
+        },
+    )
+
+
+def _update_category_sheet(spreadsheet, categorias: Dict[str, float]) -> None:
+    worksheet = _worksheet(spreadsheet, "Categorias", CATEGORIAS_HEADERS)
+    records = worksheet.get_all_records()
+    if not records:
+        return
+
+    updates = []
+    for index, row in enumerate(records, start=2):
+        categoria = str(row.get("Categoria", "")).strip()
+        orcamento = _to_float(row.get("Orcamento", 0))
+        real = round(categorias.get(categoria, 0.0), 2)
+        sobra = round(orcamento - real, 2)
+        updates.append([real, sobra])
+
+    if updates:
+        worksheet.update(updates, f"C2:D{len(updates) + 1}", value_input_option="USER_ENTERED")
+
+
+def _get_category_rows(spreadsheet) -> List[Dict[str, Any]]:
+    worksheet = _worksheet(spreadsheet, "Categorias", CATEGORIAS_HEADERS)
+    rows = []
+    for row in worksheet.get_all_records():
+        categoria = str(row.get("Categoria", "")).strip()
+        if not categoria:
+            continue
+        orcamento = _to_float(row.get("Orcamento", 0))
+        real = _to_float(row.get("Real Gasto", 0))
+        rows.append(
+            {
+                "categoria": categoria,
+                "orcamento": orcamento,
+                "real": real,
+                "sobra": round(orcamento - real, 2),
+            }
+        )
+    return rows
+
+
+def _latest_records(spreadsheet, worksheet_name: str, limit: int) -> List[Dict[str, Any]]:
+    worksheet = _worksheet(spreadsheet, worksheet_name, TAB_DEFINITIONS.get(worksheet_name, []))
+    records = worksheet.get_all_records()
+    return records[-limit:] if records else []
+
+
+def _update_dashboard(spreadsheet, totals: Dict[str, Any]) -> None:
+    dashboard = _worksheet(spreadsheet, "Dashboard", [])
+    if dashboard.acell("A1").value != "PLANILHA IA - FINANÇAS":
+        _build_dashboard_layout(spreadsheet)
+
+    receitas = _latest_records(spreadsheet, "Receitas", 2)
+    despesas = _latest_records(spreadsheet, "Despesas", 2)
+    contas = _latest_records(spreadsheet, "Contas", 2)
+    parceladas = _latest_records(spreadsheet, "Parceladas", 1)
+    categorias = totals.get("categorias", [])[:8]
+
+    dashboard.batch_update(
+        [
+            {"range": "H3", "values": [[datetime.now().strftime("%m/%Y")]]},
+            {
+                "range": "B7:C8",
+                "values": _two_col_records(receitas, "Descricao", "Valor", "Sem receitas", 2),
+            },
+            {"range": "B9:C9", "values": [["Total", totals["entradas"]]]},
+            {
+                "range": "B13:F14",
+                "values": _account_rows(contas, 2),
+            },
+            {"range": "B15:F15", "values": [["Total", "", "", totals["contas"], ""]]},
+            {
+                "range": "B19:F20",
+                "values": _expense_rows(despesas, 2),
+            },
+            {"range": "B21:F21", "values": [["Total", "", "", "", totals["despesas"]]]},
+            {
+                "range": "J13:M20",
+                "values": _dashboard_category_rows(categorias, 8),
+            },
+            {"range": "J21:M21", "values": [["Total", totals["orcamento"], totals["despesas"] + totals["contas"], totals["orcamento"] - totals["despesas"] - totals["contas"]]]},
+            {
+                "range": "J25:M25",
+                "values": _parcel_rows(parceladas),
+            },
+            {"range": "J26:M26", "values": [["Total", "", "", totals["parceladas"]]]},
+            {
+                "range": "P6:P15",
+                "values": [
+                    [totals["entradas"]],
+                    [totals["contas"]],
+                    [totals["despesas"]],
+                    [totals["parceladas"]],
+                    [totals["saldo"]],
+                    [totals["orcamento"]],
+                    [totals["despesas"] + totals["contas"]],
+                    [totals["orcamento"] - totals["despesas"] - totals["contas"]],
+                    [""],
+                    [totals["entradas"] - totals["despesas"] - totals["contas"]],
+                ],
+            },
+        ],
+        value_input_option="USER_ENTERED",
+    )
+
+
+def _two_col_records(records, first_key, second_key, empty_label, limit):
+    output = []
+    for record in records[-limit:]:
+        output.append([record.get(first_key, ""), _to_float(record.get(second_key, 0))])
+    while len(output) < limit:
+        output.append([empty_label if not output else "", 0])
+    return output
+
+
+def _account_rows(records, limit):
+    output = []
+    for record in records[-limit:]:
+        output.append(
+            [
+                record.get("Descricao", ""),
+                record.get("Data", ""),
+                record.get("Categoria", ""),
+                _to_float(record.get("Valor", 0)),
+                record.get("Status", ""),
+            ]
+        )
+    while len(output) < limit:
+        output.append(["Sem contas" if not output else "", "", "", 0, ""])
+    return output
+
+
+def _expense_rows(records, limit):
+    output = []
+    for record in records[-limit:]:
+        output.append(
+            [
+                record.get("Descricao", ""),
+                record.get("Data", ""),
+                record.get("Meio", ""),
+                record.get("Categoria", ""),
+                _to_float(record.get("Valor", 0)),
+            ]
+        )
+    while len(output) < limit:
+        output.append(["Sem despesas" if not output else "", "", "", "", 0])
+    return output
+
+
+def _dashboard_category_rows(rows, limit):
+    output = []
+    for row in rows[:limit]:
+        output.append([row["categoria"], row["orcamento"], row["real"], row["sobra"]])
+    while len(output) < limit:
+        output.append(["", 0, 0, 0])
+    return output
+
+
+def _parcel_rows(records):
+    if not records:
+        return [["Sem parcelas", "", "", 0]]
+    record = records[-1]
+    return [[
+        record.get("Descricao", ""),
+        record.get("Data", ""),
+        record.get("Categoria", ""),
+        _to_float(record.get("Valor", 0)),
+    ]]
 
 
 def _normalize_transaction(data: Dict[str, Any]) -> Dict[str, Any]:
