@@ -72,7 +72,7 @@ def _worksheet(spreadsheet, title: str, headers: List[str]):
     if headers:
         current_headers = worksheet.row_values(1)
         if current_headers != headers:
-            worksheet.update("A1", [headers])
+            worksheet.update([headers], "A1", value_input_option="USER_ENTERED")
             _format_header(spreadsheet, worksheet.id, len(headers))
 
     return worksheet
@@ -247,7 +247,6 @@ def update_summary(spreadsheet=None) -> None:
     saldo = entradas - despesas - contas
     resumo.clear()
     resumo.update(
-        "A1",
         [
             ["Resumo do Mes"],
             ["Entradas", entradas],
@@ -259,6 +258,7 @@ def update_summary(spreadsheet=None) -> None:
             ["Categorias", "Real Gasto"],
             *[[categoria, valor] for categoria, valor in sorted(categorias.items())],
         ],
+        "A1",
         value_input_option="USER_ENTERED",
     )
 

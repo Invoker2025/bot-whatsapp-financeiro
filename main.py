@@ -376,5 +376,10 @@ def setup_sheet():
     if not google_sheet_configured():
         raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
 
-    ensure_finance_sheet()
+    try:
+        ensure_finance_sheet()
+    except Exception as exc:
+        print(f"Erro ao configurar planilha: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
     return {"status": "ok", "message": "Planilha configurada"}
