@@ -256,6 +256,16 @@ def format_success_msg(data):
 
     return msg
 
+
+def save_and_format_reply(data):
+    if save_to_api(data):
+        return format_success_msg(data)
+
+    return (
+        "⚠️ Eu entendi o lançamento, mas não consegui salvar na planilha.\n\n"
+        "Tente novamente em alguns segundos. Se continuar, abra o Render e veja os logs do serviço."
+    )
+
 # ======================================================
 # TEXTO (WHATSAPP)
 # ======================================================
@@ -327,8 +337,7 @@ def receive_message(msg: Message):
                     )
                 }
 
-            save_to_api(pending)
-            msg_final = format_success_msg(pending)
+            msg_final = save_and_format_reply(pending)
             clear_pending(user_id)
             return {"reply": msg_final}
 
@@ -347,8 +356,7 @@ def receive_message(msg: Message):
                 pending["total_parcelas"] = vezes
                 pending["parcelado"] = "Sim" if vezes > 1 else "Não"
 
-                save_to_api(pending)
-                msg_final = format_success_msg(pending)
+                msg_final = save_and_format_reply(pending)
                 clear_pending(user_id)
                 return {"reply": msg_final}
             except ValueError:
@@ -423,8 +431,7 @@ def receive_message(msg: Message):
                 "meio") and parsed.get("meio") != "Pendente" else "Pix"
             parsed["subcategoria"] = parsed.get("subcategoria") or parsed.get(
                 "categoria", "Receita")
-            save_to_api(parsed)
-            return {"reply": format_success_msg(parsed)}
+            return {"reply": save_and_format_reply(parsed)}
 
         # Se a mensagem ja trouxe parcelas, preserva. Se so disse "credito",
         # deixa o fluxo perguntar se foi parcelado.
@@ -433,8 +440,7 @@ def receive_message(msg: Message):
             and parsed.get("meio") == "Crédito"
             and str(parsed.get("parcelado", "")).lower() != "pendente"
         ):
-            save_to_api(parsed)
-            return {"reply": format_success_msg(parsed)}
+            return {"reply": save_and_format_reply(parsed)}
 
         meio_novo = parsed.get("meio")
         if not meio_novo or str(meio_novo).lower() in ["none", "pendente"]:
@@ -468,8 +474,7 @@ def receive_message(msg: Message):
                 )
             }
 
-        save_to_api(parsed)
-        return {"reply": format_success_msg(parsed)}
+        return {"reply": save_and_format_reply(parsed)}
 
     except Exception as e:
         print(f"Erro: {e}")

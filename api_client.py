@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 
 from config import PLANILHA_API_URL
 from db import get_month_summary_db, save_transaction
-from google_sheets_client import append_transaction
+from google_sheets_client import append_transaction, is_configured as google_sheets_configured
 
 
 def _dashboard_api_base() -> str:
@@ -19,9 +19,12 @@ def _dashboard_api_base() -> str:
     return base
 
 
-def _save_transaction(data: Dict[str, Any]) -> None:
+def _save_transaction(data: Dict[str, Any]) -> bool:
+    sheet_saved = False
+
     try:
         if append_transaction(data):
+            sheet_saved = True
             print("Transacao salva no Google Sheets.")
     except Exception as exc:
         print(f"Falha ao salvar no Google Sheets: {exc}")
@@ -37,11 +40,12 @@ def _save_transaction(data: Dict[str, Any]) -> None:
             )
             response.raise_for_status()
             print("Transacao salva no dashboard.")
-            return
+            return sheet_saved
         except Exception as exc:
             print(f"Falha ao salvar no dashboard, usando SQLite local: {exc}")
 
     save_transaction(data)
+    return sheet_saved
 
 
 def _normalize_transaction(data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
@@ -82,6 +86,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
     try:
         transaction_base, total_parcelas = _normalize_transaction(data)
         print("Salvando transacao financeira.")
+        sheet_results = []
 
         if total_parcelas > 1:
             valor_parcela = transaction_base["valor"] / total_parcelas
@@ -102,9 +107,9 @@ def save_to_api(data: Dict[str, Any]) -> bool:
                         ),
                     }
                 )
-                _save_transaction(parcela_data)
+                sheet_results.append(_save_transaction(parcela_data))
 
-            return True
+            return all(sheet_results) if google_sheets_configured() else True
 
         transaction_base.update(
             {
@@ -113,8 +118,8 @@ def save_to_api(data: Dict[str, Any]) -> bool:
                 "data": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f"),
             }
         )
-        _save_transaction(transaction_base)
-        return True
+        sheet_results.append(_save_transaction(transaction_base))
+        return all(sheet_results) if google_sheets_configured() else True
 
     except Exception as exc:
         print(f"Erro ao salvar transacao: {exc}")
