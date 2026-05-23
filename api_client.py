@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any, Dict, Tuple
 
 import requests
@@ -7,6 +6,7 @@ from dateutil.relativedelta import relativedelta
 from config import PLANILHA_API_URL
 from db import get_month_summary_db, save_transaction
 from google_sheets_client import append_transaction, is_configured as google_sheets_configured
+from time_utils import now_local
 
 
 LAST_SAVE_ERROR = ""
@@ -114,7 +114,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
 
         if total_parcelas > 1:
             valor_parcela = transaction_base["valor"] / total_parcelas
-            data_base = datetime.now()
+            data_base = now_local()
 
             for parcela in range(1, total_parcelas + 1):
                 data_parcela = data_base + relativedelta(months=parcela - 1)
@@ -139,7 +139,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
             {
                 "parcela_atual": 1,
                 # Formato ISO completo para compatibilidade com _parse_date do Sheets
-                "data": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f"),
+                "data": now_local().strftime("%Y-%m-%dT%H:%M:%S.%f"),
             }
         )
         sheet_results.append(_save_transaction(transaction_base))
@@ -156,7 +156,7 @@ def get_month_summary(mes: int = None, ano: int = None) -> tuple:
     try:
         api_base = _dashboard_api_base()
         if api_base:
-            now = datetime.now()
+            now = now_local()
             mes = mes or now.month
             ano = ano or now.year
 

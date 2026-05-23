@@ -1,6 +1,7 @@
 import sqlite3
-from datetime import datetime
 from typing import Tuple, Dict
+
+from time_utils import now_local
 
 
 DB_NAME = "gastos.db"
@@ -58,7 +59,7 @@ def save_transaction(data: Dict):
         data.get("total_parcelas"),
         data.get("descricao"),
         data.get("origem"),
-        data.get("data") or datetime.now().isoformat()
+        data.get("data") or now_local().isoformat()
     ))
 
     conn.commit()
@@ -70,7 +71,7 @@ def get_month_summary_db(mes: int = None, ano: int = None) -> Tuple[float, Dict]
     cursor = conn.cursor()
 
     if not mes or not ano:
-        now = datetime.now()
+        now = now_local()
         mes = mes or now.month
         ano = ano or now.year
 

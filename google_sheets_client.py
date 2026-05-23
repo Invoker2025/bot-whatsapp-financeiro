@@ -6,6 +6,7 @@ import gspread
 from gspread.utils import a1_range_to_grid_range
 
 from config import GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_SHEET_ID
+from time_utils import now_local
 
 
 TRANSACTIONS_HEADERS = [
@@ -280,7 +281,7 @@ def _build_dashboard_layout(spreadsheet) -> None:
                 "", "", "", "", "", "", "", "", ""],
             ["", "Dashboard financeiro automático", "", "", "",
                 "", "", "", "", "", "", "", "", "", "", "", ""],
-            ["", "Mês", datetime.now().strftime("%m/%Y"), "", "", "Entradas",
+            ["", "Mês", now_local().strftime("%m/%Y"), "", "", "Entradas",
              0, "", "Despesas", 0, "", "Saldo", 0, "", "Orçamento", 0, ""],
             ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
             ["", "Receitas", "", "", "", "Metas", "", "", "",
@@ -633,7 +634,7 @@ def update_summary(spreadsheet=None) -> None:
     transacoes = _worksheet(spreadsheet, "Transacoes", TRANSACTIONS_HEADERS)
     rows = transacoes.get_all_records()
 
-    now = datetime.now()
+    now = now_local()
     entradas = despesas = contas = parceladas = 0.0
     categorias: Dict[str, float] = {}
 
@@ -780,7 +781,7 @@ def _update_dashboard(spreadsheet, totals: Dict[str, Any]) -> None:
 
     dashboard.batch_update(
         [
-            {"range": "C3", "values": [[datetime.now().strftime("%m/%Y")]]},
+            {"range": "C3", "values": [[now_local().strftime("%m/%Y")]]},
             {"range": "G3", "values": [[totals["entradas"]]]},
             {"range": "J3", "values": [
                 [totals["despesas"] + totals["contas"]]]},
@@ -936,7 +937,7 @@ def _parcel_display(record: Dict[str, Any]) -> str:
 
 
 def _normalize_transaction(data: Dict[str, Any]) -> Dict[str, Any]:
-    parsed_date = _parse_date(str(data.get("data", ""))) or datetime.now()
+    parsed_date = _parse_date(str(data.get("data", ""))) or now_local()
     total_parcelas = int(data.get("total_parcelas", 1) or 1)
     parcela_atual = int(data.get("parcela_atual", 1) or 1)
 

@@ -6,6 +6,9 @@ load_dotenv()
 # OpenAI API key used by categorization and audio transcription.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
+# App timezone used when writing dates to the spreadsheet.
+APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Fortaleza")
+
 # Dashboard API URL. Configure it ending with /api, for example:
 # https://seu-dashboard.onrender.com/api
 PLANILHA_API_URL = os.getenv("PLANILHA_API_URL", "").rstrip("/")

@@ -7,7 +7,6 @@ import re
 import threading
 import time
 import unicodedata
-from datetime import datetime
 from typing import Optional
 
 from ai_parser import parse_message
@@ -24,13 +23,14 @@ from state import (
     mark_reminder_sent,
     set_pending,
 )
-from config import OPENAI_API_KEY, PENDING_REMINDER_SECONDS, WHATSAPP_VERIFY_TOKEN
+from config import APP_TIMEZONE, OPENAI_API_KEY, PENDING_REMINDER_SECONDS, WHATSAPP_VERIFY_TOKEN
 from twilio_whatsapp import (
     build_twiml_message,
     normalize_twilio_whatsapp_id,
     send_twilio_whatsapp_text,
     verify_twilio_signature,
 )
+from time_utils import now_local
 from whatsapp_cloud import extract_text_messages, send_whatsapp_text, verify_signature
 
 # ======================================================
@@ -363,7 +363,8 @@ def receive_message(msg: Message):
     if texto_limpo == "/resumo":
         try:
             total, cats = get_month_summary()
-            resumo_msg = f"📊 *RESUMO DE {datetime.now().month}/{datetime.now().year}*\n\n💰 *Total:* R$ {total:.2f}\n\n📂 *Categorias:*\n"
+            now = now_local()
+            resumo_msg = f"📊 *RESUMO DE {now.month}/{now.year}*\n\n💰 *Total:* R$ {total:.2f}\n\n📂 *Categorias:*\n"
             for c, v in sorted(cats.items(), key=lambda x: x[1], reverse=True):
                 resumo_msg += f"• {c}: R$ {v:.2f}\n"
             return {"reply": resumo_msg}
@@ -694,6 +695,7 @@ def root():
         "status": "ok",
         "message": "Bot WhatsApp + Planilha Financeira",
         "version": "2.0",
+        "timezone": APP_TIMEZONE,
         "google_sheet_configured": google_sheet_configured(),
     }
 
@@ -734,5 +736,6 @@ def sheet_status():
     return {
         "status": "ok",
         "google_sheet_configured": google_sheet_configured(),
+        "timezone": APP_TIMEZONE,
         "last_save_error": get_last_save_error(),
     }
