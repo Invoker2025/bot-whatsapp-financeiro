@@ -267,13 +267,38 @@ def save_and_format_reply(data):
     )
 
 
-def save_in_background(data: dict) -> None:
+def send_active_message(user_id: str, channel: str, body: str) -> bool:
+    if channel == "twilio":
+        return send_twilio_whatsapp_text(user_id, body)
+    if channel == "whatsapp_cloud":
+        return send_whatsapp_text(user_id, body)
+    return False
+
+
+def save_in_background(data: dict, user_id: str = "", channel: str = "") -> None:
     def worker():
+        saved = False
         try:
-            if not save_to_api(dict(data)):
+            saved = save_to_api(dict(data))
+            if not saved:
                 print("Falha ao salvar transacao em background.")
         except Exception as exc:
             print(f"Erro ao salvar transacao em background: {exc}")
+
+        if not user_id or not channel:
+            return
+
+        if saved:
+            send_active_message(user_id, channel, "✅ Planilha atualizada.")
+        else:
+            send_active_message(
+                user_id,
+                channel,
+                (
+                    "⚠️ Não consegui salvar essa compra na planilha.\n\n"
+                    "Tente enviar novamente em alguns segundos."
+                ),
+            )
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -379,7 +404,11 @@ def receive_message(msg: Message):
                 pending["parcelado"] = "Sim" if vezes > 1 else "Não"
 
                 clear_pending(user_id)
-                save_in_background(pending)
+                save_in_background(
+                    pending,
+                    user_id=user_id,
+                    channel=pending.get("_channel") or msg.channel or "",
+                )
                 msg_final = format_async_success_msg(pending)
                 return {"reply": msg_final}
             except ValueError:
