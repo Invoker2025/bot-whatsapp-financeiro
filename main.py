@@ -304,10 +304,7 @@ def save_in_background(data: dict, user_id: str = "", channel: str = "") -> None
 
 
 def format_async_success_msg(data: dict) -> str:
-    return format_success_msg(data).replace(
-        "Planilha atualizada!",
-        "Planilha sendo atualizada!",
-    )
+    return format_success_msg(data).replace("\n\n🚀 _Planilha atualizada!_", "")
 
 
 def is_numeric_only_message(text: str) -> bool:

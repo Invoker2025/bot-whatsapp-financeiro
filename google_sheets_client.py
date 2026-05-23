@@ -941,7 +941,7 @@ def _normalize_transaction(data: Dict[str, Any]) -> Dict[str, Any]:
     parcela_atual = int(data.get("parcela_atual", 1) or 1)
 
     return {
-        "data": parsed_date.strftime("%d/%m/%Y"),
+        "data": parsed_date.strftime("%d/%m/%Y %H:%M"),
         "tipo": data.get("tipo", "Gasto"),
         "descricao": data.get("descricao", ""),
         "categoria": data.get("categoria", "Geral"),
@@ -979,7 +979,13 @@ def _parse_date(value: str):
     if not value:
         return None
 
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y"):
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%dT%H:%M:%S",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+    ):
         try:
             return datetime.strptime(value[:26], fmt)
         except ValueError:
