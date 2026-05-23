@@ -25,5 +25,11 @@ services:
         value: v25.0
       - key: TWILIO_AUTH_TOKEN
         sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        value: whatsapp:+14155238886
       - key: TWILIO_PUBLIC_WEBHOOK_URL
         sync: false
+      - key: PENDING_REMINDER_SECONDS
+        value: 120

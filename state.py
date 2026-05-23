@@ -2,8 +2,8 @@
 import json
 import os
 import sqlite3
-from datetime import date, datetime
-from typing import Any, Dict, Optional
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 DB_NAME = os.getenv("STATE_DB_PATH", "gastos.db")
 
@@ -38,6 +38,24 @@ def _json_default(value: Any):
     return str(value)
 
 
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _parse_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def get_pending(user_id: str) -> Optional[Dict[str, Any]]:
     """Retorna os dados pendentes de um usuário (do SQLite)"""
     # Tenta cache em memória primeiro
@@ -66,8 +84,22 @@ def get_pending(user_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
-def set_pending(user_id: str, data: dict):
+def set_pending(
+    user_id: str,
+    data: dict,
+    channel: Optional[str] = None,
+    reminder_seconds: int = 120,
+):
     """Define dados pendentes para um usuário (persistente)"""
+    data = dict(data)
+    if channel:
+        data["_channel"] = channel
+
+    data["_reminder_due_at"] = (
+        _now_utc() + timedelta(seconds=max(1, reminder_seconds))
+    ).isoformat()
+    data["_reminder_sent"] = False
+
     conn = _get_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -107,3 +139,52 @@ def clear_pending(user_id: str):
         del get_pending._cache[user_id]
 
     print("Estado pendente limpo.")
+
+
+def get_due_reminders() -> List[Tuple[str, Dict[str, Any]]]:
+    now = _now_utc()
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id, state_data FROM user_states")
+    rows = cursor.fetchall()
+    conn.close()
+
+    due = []
+    for row in rows:
+        try:
+            data = json.loads(row["state_data"])
+        except (json.JSONDecodeError, KeyError):
+            continue
+
+        if data.get("_reminder_sent"):
+            continue
+
+        due_at = _parse_datetime(str(data.get("_reminder_due_at", "")))
+        if due_at and due_at <= now:
+            due.append((row["user_id"], data))
+
+    return due
+
+
+def mark_reminder_sent(user_id: str) -> None:
+    data = get_pending(user_id)
+    if not data:
+        return
+
+    data["_reminder_sent"] = True
+    conn = _get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        UPDATE user_states
+        SET state_data = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE user_id = ?
+        """,
+        (json.dumps(data, ensure_ascii=False, default=_json_default), user_id),
+    )
+    conn.commit()
+    conn.close()
+
+    if not hasattr(get_pending, "_cache"):
+        get_pending._cache = {}
+    get_pending._cache[user_id] = data

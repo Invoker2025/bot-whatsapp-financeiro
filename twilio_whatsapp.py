@@ -5,7 +5,14 @@ import re
 from html import escape
 from typing import Dict, Optional
 
-from config import TWILIO_AUTH_TOKEN, TWILIO_PUBLIC_WEBHOOK_URL
+import requests
+
+from config import (
+    TWILIO_ACCOUNT_SID,
+    TWILIO_AUTH_TOKEN,
+    TWILIO_PUBLIC_WEBHOOK_URL,
+    TWILIO_WHATSAPP_FROM,
+)
 
 
 def normalize_twilio_whatsapp_id(value: str) -> str:
@@ -43,3 +50,33 @@ def verify_twilio_signature(
     expected = base64.b64encode(digest).decode("utf-8")
 
     return hmac.compare_digest(expected, signature_header)
+
+
+def send_twilio_whatsapp_text(to: str, body: str) -> bool:
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN or not TWILIO_WHATSAPP_FROM:
+        print("Twilio outbound nao configurado; lembrete nao enviado.")
+        return False
+
+    to_digits = normalize_twilio_whatsapp_id(to)
+    if not to_digits:
+        return False
+
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Messages.json"
+    data = {
+        "From": TWILIO_WHATSAPP_FROM,
+        "To": f"whatsapp:+{to_digits}",
+        "Body": body,
+    }
+
+    try:
+        response = requests.post(
+            url,
+            data=data,
+            auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+            timeout=15,
+        )
+        response.raise_for_status()
+        return True
+    except Exception as exc:
+        print(f"Erro ao enviar lembrete pelo Twilio: {exc}")
+        return False

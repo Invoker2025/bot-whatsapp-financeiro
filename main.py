@@ -4,8 +4,11 @@ from openai import OpenAI
 import tempfile
 import os
 import re
+import threading
+import time
 import unicodedata
 from datetime import datetime
+from typing import Optional
 
 from ai_parser import parse_message
 from api_client import save_to_api, get_month_summary
@@ -14,9 +17,20 @@ from google_sheets_client import (
     is_configured as google_sheet_configured,
     reset_finance_template,
 )
-from state import get_pending, set_pending, clear_pending
-from config import OPENAI_API_KEY, WHATSAPP_VERIFY_TOKEN
-from twilio_whatsapp import build_twiml_message, normalize_twilio_whatsapp_id, verify_twilio_signature
+from state import (
+    clear_pending,
+    get_due_reminders,
+    get_pending,
+    mark_reminder_sent,
+    set_pending,
+)
+from config import OPENAI_API_KEY, PENDING_REMINDER_SECONDS, WHATSAPP_VERIFY_TOKEN
+from twilio_whatsapp import (
+    build_twiml_message,
+    normalize_twilio_whatsapp_id,
+    send_twilio_whatsapp_text,
+    verify_twilio_signature,
+)
 from whatsapp_cloud import extract_text_messages, send_whatsapp_text, verify_signature
 
 # ======================================================
@@ -34,6 +48,7 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 class Message(BaseModel):
     user_id: str
     text: str
+    channel: Optional[str] = "api"
 
 
 PAYMENT_OPTIONS = {
@@ -52,12 +67,17 @@ PAYMENT_OPTIONS = {
 }
 
 
-def normalize_payment_response(text: str):
+def normalize_text(text: str) -> str:
     normalized = (text or "").strip().lower()
     normalized_ascii = unicodedata.normalize("NFKD", normalized)
-    normalized_ascii = "".join(
+    return "".join(
         char for char in normalized_ascii if not unicodedata.combining(char)
     )
+
+
+def normalize_payment_response(text: str):
+    normalized = (text or "").strip().lower()
+    normalized_ascii = normalize_text(text)
 
     if normalized in PAYMENT_OPTIONS:
         return PAYMENT_OPTIONS[normalized]
@@ -72,6 +92,129 @@ def normalize_payment_response(text: str):
     if "dinheiro" in normalized_ascii:
         return "Dinheiro"
     return None
+
+
+SOCIAL_WORDS = [
+    "oi",
+    "ola",
+    "olá",
+    "bom dia",
+    "boa tarde",
+    "boa noite",
+    "tudo bem",
+    "como ta",
+    "como esta",
+    "como vai",
+    "e ai",
+    "eai",
+]
+
+FINANCIAL_WORDS = [
+    "gastei",
+    "gasto",
+    "paguei",
+    "comprei",
+    "recebi",
+    "ganhei",
+    "salario",
+    "salário",
+    "pix",
+    "debito",
+    "débito",
+    "credito",
+    "crédito",
+]
+
+
+def is_social_message(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized:
+        return False
+
+    if any(char.isdigit() for char in normalized):
+        return False
+
+    if any(word in normalized for word in [normalize_text(w) for w in FINANCIAL_WORDS]):
+        return False
+
+    return any(word in normalized for word in [normalize_text(w) for w in SOCIAL_WORDS])
+
+
+def format_social_reply() -> str:
+    return (
+        "Oi! Tudo bem por aqui.\n\n"
+        "Pode me mandar um lançamento, por exemplo:\n"
+        "`gastei 42 pastel pix`\n"
+        "`recebi 3200 salário`"
+    )
+
+
+def pending_followup_message(pending: dict) -> str:
+    if not pending.get("meio") or str(pending.get("meio")).lower() in ["none", "pendente"]:
+        return (
+            "Ainda estou aqui. Só falta o meio de pagamento desse gasto.\n\n"
+            "Responda com:\n"
+            "1 - Pix\n"
+            "2 - Débito\n"
+            "3 - Crédito\n"
+            "4 - Dinheiro"
+        )
+
+    if str(pending.get("parcelado", "")).lower() == "pendente":
+        return (
+            "Ainda estou aqui. Só falta me dizer em quantas parcelas foi.\n\n"
+            "Digite o número de parcelas. Se foi à vista, mande `1`."
+        )
+
+    return "Ainda estou aqui. Pode mandar a próxima informação."
+
+
+def set_pending_for_message(user_id: str, data: dict, msg: Message) -> None:
+    set_pending(
+        user_id,
+        data,
+        channel=data.get("_channel") or msg.channel,
+        reminder_seconds=PENDING_REMINDER_SECONDS,
+    )
+
+
+def send_pending_reminder(user_id: str, pending: dict) -> bool:
+    body = pending_followup_message(pending)
+    channel = pending.get("_channel")
+
+    if channel == "twilio":
+        return send_twilio_whatsapp_text(user_id, body)
+    if channel == "whatsapp_cloud":
+        return send_whatsapp_text(user_id, body)
+
+    print("Canal sem envio ativo; lembrete pendente marcado.")
+    return False
+
+
+def reminder_worker() -> None:
+    while True:
+        try:
+            for user_id, pending in get_due_reminders():
+                send_pending_reminder(user_id, pending)
+                mark_reminder_sent(user_id)
+        except Exception as exc:
+            print(f"Erro no worker de lembretes: {exc}")
+
+        time.sleep(30)
+
+
+_reminder_thread_started = False
+
+
+@app.on_event("startup")
+def start_reminder_worker():
+    global _reminder_thread_started
+    if _reminder_thread_started:
+        return
+
+    thread = threading.Thread(target=reminder_worker, daemon=True)
+    thread.start()
+    _reminder_thread_started = True
 
 # ======================================================
 # UTIL - FORMATAÇÃO DE MENSAGEM
@@ -153,6 +296,9 @@ def receive_message(msg: Message):
         # PASSO: Preencher Meio de Pagamento (PRIMEIRO!)
         meio_pendente = pending.get("meio")
         if not meio_pendente or str(meio_pendente).lower() in ["none", "pendente"]:
+            if is_social_message(msg.text):
+                return {"reply": pending_followup_message(pending)}
+
             texto = normalize_payment_response(msg.text)
             if not texto:
                 return {
@@ -169,7 +315,7 @@ def receive_message(msg: Message):
             pending["meio"] = texto
             if "Crédito" in texto:
                 pending["parcelado"] = "Pendente"
-                set_pending(user_id, pending)
+                set_pending_for_message(user_id, pending, msg)
                 return {
                     "reply": (
                         "💳 *CARTÃO DE CRÉDITO SELECIONADO*\n"
@@ -188,6 +334,9 @@ def receive_message(msg: Message):
 
         # PASSO: Preencher Parcelas (DEPOIS!)
         if str(pending.get("parcelado")).lower() == "pendente":
+            if is_social_message(msg.text):
+                return {"reply": pending_followup_message(pending)}
+
             try:
                 vezes = int(msg.text.strip())
                 # Validação: mínimo 1, máximo 48 parcelas
@@ -210,6 +359,9 @@ def receive_message(msg: Message):
     # ----------------------------------
     # 3. Lógica para Nova Mensagem
     # ----------------------------------
+    if is_social_message(msg.text):
+        return {"reply": format_social_reply()}
+
     try:
         parsed = parse_message(msg.text)
 
@@ -260,6 +412,9 @@ def receive_message(msg: Message):
 
         valor = float(parsed.get("valor", 0))
         if valor <= 0:
+            if is_social_message(msg.text):
+                return {"reply": format_social_reply()}
+
             return {"reply": "🤔 Não identifiquei um valor financeiro. Pode repetir?"}
 
         # --- BLOCO PARA SALVAR RECEITA DIRETO ---
@@ -283,7 +438,7 @@ def receive_message(msg: Message):
 
         meio_novo = parsed.get("meio")
         if not meio_novo or str(meio_novo).lower() in ["none", "pendente"]:
-            set_pending(user_id, parsed)
+            set_pending_for_message(user_id, parsed, msg)
             return {
                 "reply": (
                     f"✨ *Gasto Capturado!* ✨\n\n"
@@ -301,7 +456,7 @@ def receive_message(msg: Message):
             }
 
         if "Crédito" in str(parsed.get("meio")) and str(parsed.get("parcelado")).lower() == "pendente":
-            set_pending(user_id, parsed)
+            set_pending_for_message(user_id, parsed, msg)
             return {
                 "reply": (
                     "💳 *CARTÃO DE CRÉDITO SELECIONADO*\n"
@@ -348,7 +503,9 @@ def process_whatsapp_cloud_text(user_id: str, text: str):
     pelo BackgroundTasks e que o usuário receba uma resposta de erro.
     """
     try:
-        response = receive_message(Message(user_id=user_id, text=text))
+        response = receive_message(
+            Message(user_id=user_id, text=text, channel="whatsapp_cloud")
+        )
         reply = response.get("reply") if isinstance(response, dict) else None
         if reply:
             send_whatsapp_text(user_id, reply)
@@ -402,7 +559,9 @@ async def receive_twilio_whatsapp(request: Request):
         reply = "Envie uma mensagem de texto com o gasto. Ex: gastei 25 no almoco pix"
     else:
         try:
-            response = receive_message(Message(user_id=user_id, text=text))
+            response = receive_message(
+                Message(user_id=user_id, text=text, channel="twilio")
+            )
             reply = response.get("reply") if isinstance(response, dict) else "Processado."
         except Exception as e:
             print(f"Erro no webhook Twilio: {e}")
