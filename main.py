@@ -216,6 +216,27 @@ def start_reminder_worker():
     thread.start()
     _reminder_thread_started = True
 
+
+USER_LOCKS = {}
+USER_LOCKS_GUARD = threading.Lock()
+
+
+def get_user_lock(user_id: str):
+    key = user_id or "__unknown__"
+    with USER_LOCKS_GUARD:
+        if key not in USER_LOCKS:
+            USER_LOCKS[key] = threading.Lock()
+        return USER_LOCKS[key]
+
+
+def wait_for_pending(user_id: str, attempts: int = 8, delay: float = 0.25):
+    for _ in range(attempts):
+        pending = get_pending(user_id)
+        if pending:
+            return pending
+        time.sleep(delay)
+    return None
+
 # ======================================================
 # UTIL - FORMATAÇÃO DE MENSAGEM
 # ======================================================
@@ -320,6 +341,9 @@ def receive_message(msg: Message):
     user_id = msg.user_id
     pending = get_pending(user_id)
     texto_limpo = msg.text.strip().lower()
+
+    if not pending and is_numeric_only_message(msg.text):
+        pending = wait_for_pending(user_id)
 
     # ----------------------------------
     # 1. Comandos globais
@@ -565,9 +589,10 @@ def process_whatsapp_cloud_text(user_id: str, text: str):
     pelo BackgroundTasks e que o usuário receba uma resposta de erro.
     """
     try:
-        response = receive_message(
-            Message(user_id=user_id, text=text, channel="whatsapp_cloud")
-        )
+        with get_user_lock(user_id):
+            response = receive_message(
+                Message(user_id=user_id, text=text, channel="whatsapp_cloud")
+            )
         reply = response.get("reply") if isinstance(response, dict) else None
         if reply:
             send_whatsapp_text(user_id, reply)
@@ -621,10 +646,11 @@ async def receive_twilio_whatsapp(request: Request):
         reply = "Envie uma mensagem de texto com o gasto. Ex: gastei 25 no almoco pix"
     else:
         try:
-            response = receive_message(
-                Message(user_id=user_id, text=text, channel="twilio")
-            )
-            reply = response.get("reply") if isinstance(response, dict) else "Processado."
+            with get_user_lock(user_id):
+                response = receive_message(
+                    Message(user_id=user_id, text=text, channel="twilio")
+                )
+                reply = response.get("reply") if isinstance(response, dict) else "Processado."
         except Exception as e:
             print(f"Erro no webhook Twilio: {e}")
             reply = "❌ Erro interno. Tente novamente."
