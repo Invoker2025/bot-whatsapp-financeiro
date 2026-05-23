@@ -266,6 +266,28 @@ def save_and_format_reply(data):
         "Tente novamente em alguns segundos. Se continuar, abra o Render e veja os logs do serviço."
     )
 
+
+def save_in_background(data: dict) -> None:
+    def worker():
+        try:
+            if not save_to_api(dict(data)):
+                print("Falha ao salvar transacao em background.")
+        except Exception as exc:
+            print(f"Erro ao salvar transacao em background: {exc}")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def format_async_success_msg(data: dict) -> str:
+    return format_success_msg(data).replace(
+        "Planilha atualizada!",
+        "Planilha sendo atualizada!",
+    )
+
+
+def is_numeric_only_message(text: str) -> bool:
+    return bool(re.fullmatch(r"\s*\d{1,2}\s*", text or ""))
+
 # ======================================================
 # TEXTO (WHATSAPP)
 # ======================================================
@@ -356,8 +378,9 @@ def receive_message(msg: Message):
                 pending["total_parcelas"] = vezes
                 pending["parcelado"] = "Sim" if vezes > 1 else "Não"
 
-                msg_final = save_and_format_reply(pending)
                 clear_pending(user_id)
+                save_in_background(pending)
+                msg_final = format_async_success_msg(pending)
                 return {"reply": msg_final}
             except ValueError:
                 return {"reply": "❌ Por favor, digite apenas o *número* de parcelas (ex: `3`)."}
@@ -369,6 +392,14 @@ def receive_message(msg: Message):
     # ----------------------------------
     if is_social_message(msg.text):
         return {"reply": format_social_reply()}
+
+    if is_numeric_only_message(msg.text):
+        return {
+            "reply": (
+                "Não tenho nenhuma compra aguardando essa resposta agora.\n\n"
+                "Para lançar um gasto, mande algo como: `gastei 33 churrasco`."
+            )
+        }
 
     try:
         parsed = parse_message(msg.text)
