@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Any, Dict, List
+import unicodedata
 
 import gspread
 from gspread.utils import a1_range_to_grid_range
@@ -918,10 +919,19 @@ def _latest_transaction_rows(spreadsheet, limit):
 
 
 def _parcel_display(record: Dict[str, Any]) -> str:
+    parcelado = str(record.get("Parcelado", "") or "").strip().lower()
+    meio = _normalize_text(record.get("Meio", ""))
     parcela = record.get("Parcela", "")
     total = record.get("Total Parcelas", "")
-    if parcela and total:
+
+    try:
+        total_int = int(total or 0)
+    except (TypeError, ValueError):
+        total_int = 0
+
+    if _is_credit_payment(meio) and parcelado == "sim" and parcela and total and total_int > 1:
         return f"{parcela}/{total}"
+
     return ""
 
 
@@ -946,7 +956,23 @@ def _normalize_transaction(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _parcel_label(data: Dict[str, Any]) -> str:
-    return f"{data['parcela_atual']}/{data['total_parcelas']}"
+    meio = _normalize_text(data.get("meio_pagamento", ""))
+    parcelado = str(data.get("parcelado", "") or "").lower()
+    total_parcelas = int(data.get("total_parcelas", 1) or 1)
+
+    if _is_credit_payment(meio) and parcelado == "sim" and total_parcelas > 1:
+        return f"{data['parcela_atual']}/{data['total_parcelas']}"
+
+    return ""
+
+
+def _normalize_text(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or "").strip().lower())
+    return "".join(char for char in text if not unicodedata.combining(char))
+
+
+def _is_credit_payment(meio: str) -> bool:
+    return meio.startswith("cr") or "credito" in meio or "cartao" in meio
 
 
 def _parse_date(value: str):
