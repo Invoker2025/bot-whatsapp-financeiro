@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from openai import OpenAI
 import tempfile
 import os
+import re
 from datetime import datetime
 
 from ai_parser import parse_message
@@ -124,6 +125,11 @@ def receive_message(msg: Message):
         if str(pending.get("parcelado")).lower() == "pendente":
             try:
                 vezes = int(msg.text.strip())
+                # Validação: mínimo 1, máximo 48 parcelas
+                if vezes < 1:
+                    return {"reply": "❌ Mínimo é 1 parcela (à vista). Digite um número válido."}
+                if vezes > 48:
+                    return {"reply": "❌ Máximo é 48 parcelas. Digite um número menor."}
                 pending["total_parcelas"] = vezes
                 pending["parcelado"] = "Sim" if vezes > 1 else "Não"
 
@@ -131,8 +137,10 @@ def receive_message(msg: Message):
                 msg_final = format_success_msg(pending)
                 clear_pending(user_id)
                 return {"reply": msg_final}
-            except:
-                return {"reply": "❌ Por favor, digite apenas o número de parcelas (ex: 3)."}
+            except ValueError:
+                return {"reply": "❌ Por favor, digite apenas o *número* de parcelas (ex: `3`)."}
+            except Exception:
+                return {"reply": "❌ Erro ao processar parcelas. Tente novamente."}
 
     # ----------------------------------
     # 2. Comandos (Resumo)
@@ -172,26 +180,36 @@ def receive_message(msg: Message):
             save_to_api(parsed)
             return {"reply": format_success_msg(parsed)}
 
-        # --- SE FALAR "CRÉDITO" NA FRASE, SALVA DIRETO EM 1X ---
-        if parsed.get("tipo") == "GASTO" and parsed.get("meio") == "Crédito":
-            parsed["parcelado"] = "Não"
-            parsed["total_parcelas"] = 1
+        # Se a mensagem ja trouxe parcelas, preserva. Se so disse "credito",
+        # deixa o fluxo perguntar se foi parcelado.
+        if (
+            parsed.get("tipo") == "GASTO"
+            and parsed.get("meio") == "Crédito"
+            and str(parsed.get("parcelado", "")).lower() != "pendente"
+        ):
             save_to_api(parsed)
             return {"reply": format_success_msg(parsed)}
 
-        # FORÇAR RECEITA MANUALMENTE
+        # FORÇAR RECEITA MANUALMENTE (fallback caso IA não identifique)
         palavras_receita = ["recebi", "ganhei",
                             "salário", "salario", "entrada", "pix de"]
         if any(palavra in texto_limpo for palavra in palavras_receita):
             parsed["tipo"] = "RECEITA"
             if parsed["valor"] == 0:
-                import re
-                numeros = re.findall(r'\d+', texto_limpo)
-                if numeros:
-                    parsed["valor"] = float(numeros[0])
+                # Tenta extrair valor com regex melhorada
+                numeros = re.findall(r'(?:R\$\s*)?([\d]+(?:[.,]\d{1,2})?)', texto_limpo)
+                for num_str in numeros:
+                    try:
+                        num = float(num_str.replace(",", "."))
+                        if 1 <= num <= 50000:
+                            parsed["valor"] = num
+                            break
+                    except ValueError:
+                        continue
 
         print(f"DEBUG IA: {parsed}")
 
+        # Sobrescrita manual de categorias baseadas em palavras-chave na descrição
         desc_baixa = str(parsed.get("descricao", "")).lower()
 
         if "farmácia" in desc_baixa or "remédio" in desc_baixa:
@@ -262,11 +280,6 @@ def receive_message(msg: Message):
         return {"reply": "❌ Erro interno. Tente novamente."}
 
 # ======================================================
-# ÁUDIO (WHATSAPP / WHISPER)
-# ======================================================
-
-
-# ======================================================
 # WHATSAPP CLOUD API
 # ======================================================
 
@@ -288,10 +301,25 @@ def verify_whatsapp_webhook(
 
 
 def process_whatsapp_cloud_text(user_id: str, text: str):
-    response = receive_message(Message(user_id=user_id, text=text))
-    reply = response.get("reply") if isinstance(response, dict) else None
-    if reply:
-        send_whatsapp_text(user_id, reply)
+    """
+    Processa mensagem recebida do webhook WhatsApp Cloud.
+    Com try/except para garantir que erros não sejam engolidos silenciosamente
+    pelo BackgroundTasks e que o usuário receba uma resposta de erro.
+    """
+    try:
+        response = receive_message(Message(user_id=user_id, text=text))
+        reply = response.get("reply") if isinstance(response, dict) else None
+        if reply:
+            send_whatsapp_text(user_id, reply)
+    except Exception as e:
+        print(f"❌ Erro no processamento webhook WhatsApp Cloud: {e}")
+        try:
+            send_whatsapp_text(
+                user_id,
+                "❌ Ocorreu um erro ao processar sua mensagem. Tente novamente."
+            )
+        except Exception:
+            pass
 
 
 @app.post("/webhook")
@@ -332,8 +360,12 @@ async def receive_twilio_whatsapp(request: Request):
     if not text:
         reply = "Envie uma mensagem de texto com o gasto. Ex: gastei 25 no almoco pix"
     else:
-        response = receive_message(Message(user_id=user_id, text=text))
-        reply = response.get("reply") if isinstance(response, dict) else "Processado."
+        try:
+            response = receive_message(Message(user_id=user_id, text=text))
+            reply = response.get("reply") if isinstance(response, dict) else "Processado."
+        except Exception as e:
+            print(f"❌ Erro no webhook Twilio: {e}")
+            reply = "❌ Erro interno. Tente novamente."
 
     return Response(content=build_twiml_message(reply), media_type="application/xml")
 
