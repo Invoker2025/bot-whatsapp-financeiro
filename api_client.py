@@ -56,12 +56,15 @@ def _normalize_transaction(data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:
     total_parcelas = max(total_parcelas, 1)
     parcelado = "Sim" if total_parcelas > 1 else "Não"
 
+    # Pega o meio de pagamento: tenta "meio_pagamento" primeiro, depois "meio"
+    meio = data.get("meio_pagamento") or data.get("meio", "Pix") or "Pix"
+
     transaction_base = {
         "tipo": tipo,
         "valor": float(data.get("valor", 0) or 0),
         "categoria": data.get("categoria", "Geral") or "Geral",
         "subcategoria": data.get("subcategoria", "") or "",
-        "meio_pagamento": data.get("meio", "Pix") or "Pix",
+        "meio_pagamento": meio,
         "parcelado": parcelado,
         "total_parcelas": total_parcelas,
         "descricao": data.get("descricao", "") or "",
@@ -78,7 +81,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
     """
     try:
         transaction_base, total_parcelas = _normalize_transaction(data)
-        print(f"Salvando transacao: {transaction_base}")
+        print("Salvando transacao financeira.")
 
         if total_parcelas > 1:
             valor_parcela = transaction_base["valor"] / total_parcelas
@@ -91,7 +94,8 @@ def save_to_api(data: Dict[str, Any]) -> bool:
                     {
                         "valor": valor_parcela,
                         "parcela_atual": parcela,
-                        "data": data_parcela.isoformat(),
+                        # Formato ISO completo para compatibilidade com _parse_date do Sheets
+                        "data": data_parcela.strftime("%Y-%m-%dT%H:%M:%S.%f"),
                         "descricao": (
                             f"{transaction_base['descricao']} "
                             f"({parcela}/{total_parcelas})"
@@ -105,7 +109,8 @@ def save_to_api(data: Dict[str, Any]) -> bool:
         transaction_base.update(
             {
                 "parcela_atual": 1,
-                "data": datetime.now().isoformat(),
+                # Formato ISO completo para compatibilidade com _parse_date do Sheets
+                "data": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f"),
             }
         )
         _save_transaction(transaction_base)

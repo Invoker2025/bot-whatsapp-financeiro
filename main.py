@@ -4,6 +4,7 @@ from openai import OpenAI
 import tempfile
 import os
 import re
+import unicodedata
 from datetime import datetime
 
 from ai_parser import parse_message
@@ -33,6 +34,44 @@ client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 class Message(BaseModel):
     user_id: str
     text: str
+
+
+PAYMENT_OPTIONS = {
+    "1": "Pix",
+    "pix": "Pix",
+    "2": "Débito",
+    "debito": "Débito",
+    "débito": "Débito",
+    "3": "Crédito",
+    "credito": "Crédito",
+    "crédito": "Crédito",
+    "cartao": "Crédito",
+    "cartão": "Crédito",
+    "4": "Dinheiro",
+    "dinheiro": "Dinheiro",
+}
+
+
+def normalize_payment_response(text: str):
+    normalized = (text or "").strip().lower()
+    normalized_ascii = unicodedata.normalize("NFKD", normalized)
+    normalized_ascii = "".join(
+        char for char in normalized_ascii if not unicodedata.combining(char)
+    )
+
+    if normalized in PAYMENT_OPTIONS:
+        return PAYMENT_OPTIONS[normalized]
+    if normalized_ascii in PAYMENT_OPTIONS:
+        return PAYMENT_OPTIONS[normalized_ascii]
+    if "pix" in normalized_ascii:
+        return "Pix"
+    if "debito" in normalized_ascii or "bito" in normalized_ascii:
+        return "Débito"
+    if "credito" in normalized_ascii or "cartao" in normalized_ascii:
+        return "Crédito"
+    if "dinheiro" in normalized_ascii:
+        return "Dinheiro"
+    return None
 
 # ======================================================
 # UTIL - FORMATAÇÃO DE MENSAGEM
@@ -83,23 +122,49 @@ def format_success_msg(data):
 def receive_message(msg: Message):
     user_id = msg.user_id
     pending = get_pending(user_id)
-
-    print(f"DEBUG COMPLETO: {pending}")
+    texto_limpo = msg.text.strip().lower()
 
     # ----------------------------------
-    # 1. Lógica de Estados Pendentes
+    # 1. Comandos globais
+    # ----------------------------------
+    if texto_limpo in ["/cancelar", "cancelar", "/cancel", "cancel"]:
+        clear_pending(user_id)
+        return {
+            "reply": (
+                "❌ *Operação Cancelada*\n\n"
+                "Tudo foi limpo! Pode enviar uma nova transação."
+            )
+        }
+
+    if texto_limpo == "/resumo":
+        try:
+            total, cats = get_month_summary()
+            resumo_msg = f"📊 *RESUMO DE {datetime.now().month}/{datetime.now().year}*\n\n💰 *Total:* R$ {total:.2f}\n\n📂 *Categorias:*\n"
+            for c, v in sorted(cats.items(), key=lambda x: x[1], reverse=True):
+                resumo_msg += f"• {c}: R$ {v:.2f}\n"
+            return {"reply": resumo_msg}
+        except Exception:
+            return {"reply": "⚠️ Erro ao gerar resumo."}
+
+    # ----------------------------------
+    # 2. Lógica de Estados Pendentes
     # ----------------------------------
     if pending:
         # PASSO: Preencher Meio de Pagamento (PRIMEIRO!)
         meio_pendente = pending.get("meio")
         if not meio_pendente or str(meio_pendente).lower() in ["none", "pendente"]:
-            texto = msg.text.strip().title()
-            if texto == "1":
-                texto = "Pix"
-            elif texto == "2":
-                texto = "Débito"
-            elif texto == "3":
-                texto = "Crédito"
+            texto = normalize_payment_response(msg.text)
+            if not texto:
+                return {
+                    "reply": (
+                        "❌ Não reconheci esse meio de pagamento.\n\n"
+                        "Responda com:\n"
+                        "1 - Pix\n"
+                        "2 - Débito\n"
+                        "3 - Crédito\n"
+                        "4 - Dinheiro"
+                    )
+                }
 
             pending["meio"] = texto
             if "Crédito" in texto:
@@ -143,52 +208,10 @@ def receive_message(msg: Message):
                 return {"reply": "❌ Erro ao processar parcelas. Tente novamente."}
 
     # ----------------------------------
-    # 2. Comandos (Resumo)
-    # ----------------------------------
-
-    texto_limpo = msg.text.strip().lower()
-    # Comando: Cancelar
-    if texto_limpo in ["/cancelar", "cancelar", "/cancel", "cancel"]:
-        clear_pending(user_id)
-        return {
-            "reply": (
-                "❌ *Operação Cancelada*\n\n"
-                "Tudo foi limpo! Pode enviar uma nova transação. 😊"
-            )
-        }
-    if texto_limpo == "/resumo":
-        try:
-            total, cats = get_month_summary()
-            resumo_msg = f"📊 *RESUMO DE {datetime.now().month}/{datetime.now().year}*\n\n💰 *Total:* R$ {total:.2f}\n\n📂 *Categorias:*\n"
-            for c, v in sorted(cats.items(), key=lambda x: x[1], reverse=True):
-                resumo_msg += f"• {c}: R$ {v:.2f}\n"
-            return {"reply": resumo_msg}
-        except:
-            return {"reply": "⚠️ Erro ao gerar resumo."}
-
-    # ----------------------------------
     # 3. Lógica para Nova Mensagem
     # ----------------------------------
     try:
         parsed = parse_message(msg.text)
-
-        # --- BLOCO PARA SALVAR RECEITA DIRETO ---
-        if parsed.get("tipo") == "RECEITA":
-            parsed["meio"] = parsed.get("meio") if parsed.get(
-                "meio") and parsed.get("meio") != "Pendente" else "Pix"
-            parsed["subcategoria"] = parsed.get("categoria", "Receita")
-            save_to_api(parsed)
-            return {"reply": format_success_msg(parsed)}
-
-        # Se a mensagem ja trouxe parcelas, preserva. Se so disse "credito",
-        # deixa o fluxo perguntar se foi parcelado.
-        if (
-            parsed.get("tipo") == "GASTO"
-            and parsed.get("meio") == "Crédito"
-            and str(parsed.get("parcelado", "")).lower() != "pendente"
-        ):
-            save_to_api(parsed)
-            return {"reply": format_success_msg(parsed)}
 
         # FORÇAR RECEITA MANUALMENTE (fallback caso IA não identifique)
         palavras_receita = ["recebi", "ganhei",
@@ -206,8 +229,6 @@ def receive_message(msg: Message):
                             break
                     except ValueError:
                         continue
-
-        print(f"DEBUG IA: {parsed}")
 
         # Sobrescrita manual de categorias baseadas em palavras-chave na descrição
         desc_baixa = str(parsed.get("descricao", "")).lower()
@@ -241,6 +262,25 @@ def receive_message(msg: Message):
         if valor <= 0:
             return {"reply": "🤔 Não identifiquei um valor financeiro. Pode repetir?"}
 
+        # --- BLOCO PARA SALVAR RECEITA DIRETO ---
+        if parsed.get("tipo") == "RECEITA":
+            parsed["meio"] = parsed.get("meio") if parsed.get(
+                "meio") and parsed.get("meio") != "Pendente" else "Pix"
+            parsed["subcategoria"] = parsed.get("subcategoria") or parsed.get(
+                "categoria", "Receita")
+            save_to_api(parsed)
+            return {"reply": format_success_msg(parsed)}
+
+        # Se a mensagem ja trouxe parcelas, preserva. Se so disse "credito",
+        # deixa o fluxo perguntar se foi parcelado.
+        if (
+            parsed.get("tipo") == "GASTO"
+            and parsed.get("meio") == "Crédito"
+            and str(parsed.get("parcelado", "")).lower() != "pendente"
+        ):
+            save_to_api(parsed)
+            return {"reply": format_success_msg(parsed)}
+
         meio_novo = parsed.get("meio")
         if not meio_novo or str(meio_novo).lower() in ["none", "pendente"]:
             set_pending(user_id, parsed)
@@ -254,7 +294,8 @@ def receive_message(msg: Message):
                     "💳 *Qual o meio de pagamento?*\n\n"
                     "1️⃣  *Pix*\n"
                     "2️⃣  *Débito*\n"
-                    "3️⃣  *Crédito*\n\n"
+                    "3️⃣  *Crédito*\n"
+                    "4️⃣  *Dinheiro*\n\n"
                     "👉 _Responda com o número ou o nome._"
                 )
             }
@@ -312,7 +353,7 @@ def process_whatsapp_cloud_text(user_id: str, text: str):
         if reply:
             send_whatsapp_text(user_id, reply)
     except Exception as e:
-        print(f"❌ Erro no processamento webhook WhatsApp Cloud: {e}")
+        print(f"Erro no processamento webhook WhatsApp Cloud: {e}")
         try:
             send_whatsapp_text(
                 user_id,
@@ -364,7 +405,7 @@ async def receive_twilio_whatsapp(request: Request):
             response = receive_message(Message(user_id=user_id, text=text))
             reply = response.get("reply") if isinstance(response, dict) else "Processado."
         except Exception as e:
-            print(f"❌ Erro no webhook Twilio: {e}")
+            print(f"Erro no webhook Twilio: {e}")
             reply = "❌ Erro interno. Tente novamente."
 
     return Response(content=build_twiml_message(reply), media_type="application/xml")
@@ -387,13 +428,13 @@ async def transcribe_audio(audio: UploadFile = File(...)):
             )
         return {"text": transcription.text}
     except Exception as e:
-        print("❌ ERRO STT:", str(e))
+        print("ERRO STT:", str(e))
         return {"error": "Erro ao transcrever áudio"}
     finally:
         try:
             if os.path.exists(tmp_path):
                 os.remove(tmp_path)
-        except:
+        except Exception:
             pass
 
 

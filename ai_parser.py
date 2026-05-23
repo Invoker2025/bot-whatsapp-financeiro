@@ -1,8 +1,7 @@
 import json
 import re
 import unicodedata
-from datetime import datetime
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 from config import OPENAI_API_KEY
 
@@ -341,7 +340,6 @@ def parse_message(mensagem: str) -> Dict[str, Any]:
             "descricao": "",
             "parcelado": "Não",
             "total_parcelas": 1,
-            "data_compra": datetime.now(),
         }
 
     tipo = identificar_tipo(mensagem)
@@ -367,5 +365,4 @@ def parse_message(mensagem: str) -> Dict[str, Any]:
         "descricao": descricao,
         "parcelado": parcelado,
         "total_parcelas": total_parcelas,
-        "data_compra": datetime.now(),
     }

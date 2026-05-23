@@ -1,4 +1,6 @@
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+require('dotenv').config();
+
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode-terminal');
 const axios = require('axios');
 const fs = require('fs');
@@ -6,15 +8,20 @@ const FormData = require('form-data');
 const path = require('path');
 
 // ===================================================
+// ENV
+// ===================================================
+
+// ===================================================
 // CONFIGURAÇÕES
 // ===================================================
 
-// SEU NÚMERO (quem ENVIA a mensagem)
-const SEU_NUMERO = '557592238338';
+// Seu número pessoal, somente dígitos com DDI. Ex: 5575999999999
+const SEU_NUMERO = process.env.SE_NUMBER || process.env.SEU_NUMERO || '';
 
-// Backend Python
-const API_URL = 'http://127.0.0.1:8002/message';
-const AUDIO_API_URL = 'http://127.0.0.1:8002/audio';
+// Backend Python centraliza NLP, estados pendentes e persistência.
+const BOT_API_URL = process.env.BOT_API_URL || 'http://localhost:8000';
+const MESSAGE_API_URL = `${BOT_API_URL.replace(/\/$/, '')}/message`;
+const AUDIO_API_URL = `${BOT_API_URL.replace(/\/$/, '')}/audio`;
 
 // Pasta temporária para áudios
 const AUDIO_DIR = path.join(__dirname, 'audios');
@@ -26,10 +33,23 @@ if (!fs.existsSync(AUDIO_DIR)) fs.mkdirSync(AUDIO_DIR);
 const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-        headless: false,
+        headless: process.env.WA_HEADLESS === 'true',
         args: ['--no-sandbox', '--disable-setuid-sandbox']
     }
 });
+
+// ===================================================
+// BACKEND PYTHON
+// ===================================================
+async function enviarParaBackend(userId, text) {
+    const response = await axios.post(
+        MESSAGE_API_URL,
+        { user_id: userId, text },
+        { timeout: 30000 }
+    );
+
+    return response.data?.reply || '✅ Processado.';
+}
 
 // ===================================================
 // EVENTOS BÁSICOS
@@ -41,7 +61,8 @@ client.on('qr', (qr) => {
 
 client.on('ready', () => {
     console.log('\n✅ Bot conectado com sucesso');
-    console.log(`🤖 Aguardando mensagens do número: ${SEU_NUMERO}`);
+    console.log(`🤖 Aguardando mensagens do número: ${SEU_NUMERO || '(não configurado)'}`);
+    console.log(`🔗 Backend: ${BOT_API_URL}`);
 });
 
 // ===================================================
@@ -56,14 +77,15 @@ function normalize(id) {
 // ===================================================
 client.on('message', async (msg) => {
     try {
-        // Ignorar mensagens do próprio bot
         if (msg.fromMe) return;
-
-        // Ignorar grupos e status
         if (msg.from.endsWith('@g.us')) return;
         if (msg.from === 'status@broadcast') return;
 
-        // Validar número
+        if (!SEU_NUMERO) {
+            console.error('❌ Configure SE_NUMBER no .env antes de usar o bot.');
+            return;
+        }
+
         const fromNumber = normalize(msg.from);
         if (fromNumber !== SEU_NUMERO) return;
 
@@ -71,61 +93,63 @@ client.on('message', async (msg) => {
         // 🎤 ÁUDIO
         // ===============================
         if (msg.hasMedia && msg.type === 'ptt') {
-            console.log('🎤 Áudio recebido, baixando...');
-
             const media = await msg.downloadMedia();
             const buffer = Buffer.from(media.data, 'base64');
 
             const fileName = `audio_${Date.now()}.ogg`;
             const filePath = path.join(AUDIO_DIR, fileName);
 
-            fs.writeFileSync(filePath, buffer);
+            try {
+                fs.writeFileSync(filePath, buffer);
 
-            console.log('🔄 Enviando áudio para transcrição...');
+                const form = new FormData();
+                form.append('audio', fs.createReadStream(filePath));
 
-            const form = new FormData();
-            form.append('audio', fs.createReadStream(filePath));
+                const response = await axios.post(AUDIO_API_URL, form, {
+                    headers: form.getHeaders(),
+                    timeout: 60000,
+                    maxBodyLength: 25 * 1024 * 1024
+                });
 
-            const response = await axios.post(AUDIO_API_URL, form, {
-                headers: form.getHeaders()
-            });
+                const transcribedText = response.data.text;
 
-            const transcribedText = response.data.text;
+                if (!transcribedText) {
+                    await msg.reply('❌ Não consegui transcrever o áudio.');
+                    return;
+                }
 
-            console.log('📝 Transcrição:', transcribedText);
-
-            // Enviar texto transcrito para o backend normal
-            const finalResponse = await axios.post(API_URL, {
-                user_id: fromNumber,
-                text: transcribedText
-            });
-
-            if (finalResponse.data?.reply) {
-                await msg.reply(`🎤 "${transcribedText}"\n\n${finalResponse.data.reply}`);
+                const reply = await enviarParaBackend(fromNumber, transcribedText);
+                await msg.reply(reply);
+                return;
+            } finally {
+                fs.unlink(filePath, () => {});
             }
-
-            return;
         }
 
         // ===============================
-        // 💬 TEXTO NORMAL
+        // 💬 TEXTO NORMAL → PLANILHA
         // ===============================
         if (msg.body && msg.body.trim()) {
-            console.log('💬 Texto recebido:', msg.body);
+            console.log('💬 Texto recebido');
 
-            const response = await axios.post(API_URL, {
-                user_id: fromNumber,
-                text: msg.body
-            });
-
-            if (response.data?.reply) {
-                await msg.reply(response.data.reply);
-            }
+            const reply = await enviarParaBackend(fromNumber, msg.body.trim());
+            await msg.reply(reply);
         }
 
     } catch (err) {
-        console.error('❌ Erro:', err.message);
-        await msg.reply('⚠️ Erro ao processar a mensagem.');
+        console.error(
+            '❌ Erro geral no processamento:',
+            err.response?.status || err.message
+        );
+
+        try {
+            await msg.reply(
+                `❌ *Erro ao atualizar a planilha*
+
+Não consegui salvar esse gasto.
+Tente novamente.`
+            );
+        } catch (_) { }
     }
 });
 
