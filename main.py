@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Optional
 
 from ai_parser import parse_message
-from api_client import save_to_api, get_month_summary
+from api_client import get_last_save_error, save_to_api, get_month_summary
 from google_sheets_client import (
     ensure_finance_sheet,
     is_configured as google_sheet_configured,
@@ -312,12 +312,15 @@ def save_in_background(data: dict, user_id: str = "", channel: str = "") -> None
         if saved:
             send_active_message(user_id, channel, "✅ Planilha atualizada.")
         else:
+            detail = get_last_save_error()
+            detail_msg = f"\n\nMotivo técnico: {detail}" if detail else ""
             send_active_message(
                 user_id,
                 channel,
                 (
                     "⚠️ Não consegui salvar essa compra na planilha.\n\n"
                     "Tente enviar novamente em alguns segundos."
+                    f"{detail_msg}"
                 ),
             )
 
@@ -723,4 +726,13 @@ def reset_sheet_template():
     return {
         "status": "ok",
         "message": "Template limpo. Abas antigas foram apagadas.",
+    }
+
+
+@app.get("/sheet/status")
+def sheet_status():
+    return {
+        "status": "ok",
+        "google_sheet_configured": google_sheet_configured(),
+        "last_save_error": get_last_save_error(),
     }

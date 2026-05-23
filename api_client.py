@@ -9,6 +9,25 @@ from db import get_month_summary_db, save_transaction
 from google_sheets_client import append_transaction, is_configured as google_sheets_configured
 
 
+LAST_SAVE_ERROR = ""
+
+
+def _sanitize_error(exc: Exception) -> str:
+    message = str(exc).replace("\n", " ").strip()
+    if len(message) > 500:
+        message = f"{message[:500]}..."
+    return message or exc.__class__.__name__
+
+
+def _set_last_save_error(message: str) -> None:
+    global LAST_SAVE_ERROR
+    LAST_SAVE_ERROR = message
+
+
+def get_last_save_error() -> str:
+    return LAST_SAVE_ERROR
+
+
 def _dashboard_api_base() -> str:
     if not PLANILHA_API_URL:
         return ""
@@ -27,7 +46,9 @@ def _save_transaction(data: Dict[str, Any]) -> bool:
             sheet_saved = True
             print("Transacao salva no Google Sheets.")
     except Exception as exc:
-        print(f"Falha ao salvar no Google Sheets: {exc}")
+        error = f"Google Sheets: {_sanitize_error(exc)}"
+        _set_last_save_error(error)
+        print(f"Falha ao salvar no Google Sheets: {error}")
 
     api_base = _dashboard_api_base()
 
@@ -42,7 +63,9 @@ def _save_transaction(data: Dict[str, Any]) -> bool:
             print("Transacao salva no dashboard.")
             return sheet_saved
         except Exception as exc:
-            print(f"Falha ao salvar no dashboard, usando SQLite local: {exc}")
+            error = f"Dashboard API: {_sanitize_error(exc)}"
+            _set_last_save_error(error)
+            print(f"Falha ao salvar no dashboard, usando SQLite local: {error}")
 
     save_transaction(data)
     return sheet_saved
@@ -84,6 +107,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
     Se a API externa falhar, preserva a transacao no SQLite local.
     """
     try:
+        _set_last_save_error("")
         transaction_base, total_parcelas = _normalize_transaction(data)
         print("Salvando transacao financeira.")
         sheet_results = []
@@ -122,7 +146,9 @@ def save_to_api(data: Dict[str, Any]) -> bool:
         return all(sheet_results) if google_sheets_configured() else True
 
     except Exception as exc:
-        print(f"Erro ao salvar transacao: {exc}")
+        error = f"Salvar transacao: {_sanitize_error(exc)}"
+        _set_last_save_error(error)
+        print(f"Erro ao salvar transacao: {error}")
         return False
 
 
