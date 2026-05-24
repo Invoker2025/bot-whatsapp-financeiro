@@ -56,6 +56,13 @@ TAB_DEFINITIONS = {
     "Dividas": DIVIDAS_HEADERS,
 }
 
+DASHBOARD_TRANSACTION_LIMIT = 20
+DASHBOARD_TRANSACTION_START_ROW = 25
+DASHBOARD_TRANSACTION_END_ROW = (
+    DASHBOARD_TRANSACTION_START_ROW + DASHBOARD_TRANSACTION_LIMIT - 1
+)
+VISIBLE_TABS = {"Dashboard", "Transacoes", "Receitas", "Despesas", "Parceladas"}
+
 LEGACY_TABS = {
     "Dashboard",
     "LANÇAMENTOS",
@@ -273,16 +280,24 @@ def _number_format(sheet_id: int, a1_range: str, pattern: str) -> Dict[str, Any]
     }
 
 
-def _hide_sheet(sheet_id: int) -> Dict[str, Any]:
+def _set_sheet_hidden(sheet_id: int, hidden: bool) -> Dict[str, Any]:
     return {
         "updateSheetProperties": {
             "properties": {
                 "sheetId": sheet_id,
-                "hidden": True,
+                "hidden": hidden,
             },
             "fields": "hidden",
         }
     }
+
+
+def _hide_sheet(sheet_id: int) -> Dict[str, Any]:
+    return _set_sheet_hidden(sheet_id, True)
+
+
+def _show_sheet(sheet_id: int) -> Dict[str, Any]:
+    return _set_sheet_hidden(sheet_id, False)
 
 
 def _dashboard_has_template(worksheet) -> bool:
@@ -292,6 +307,11 @@ def _dashboard_has_template(worksheet) -> bool:
 def _build_dashboard_layout(spreadsheet) -> None:
     dashboard = _worksheet(spreadsheet, "Dashboard", [])
     dashboard.clear()
+    blank_transaction_rows = [
+        ["", "", "", "Sem lançamentos" if index == 0 else "", "", "", 0,
+            "", "", "", "", "", "", "", "", "", ""]
+        for index in range(DASHBOARD_TRANSACTION_LIMIT)
+    ]
 
     dashboard.update(
         [
@@ -341,9 +361,7 @@ def _build_dashboard_layout(spreadsheet) -> None:
                 "", "", "", "", "", "", "", "", "", ""],
             ["", "Data", "Tipo", "Descrição", "Categoria", "Meio",
                 "Valor", "Parcelas", "", "", "", "", "", "", "", "", ""],
-            ["", "", "", "Sem lançamentos", "", "", 0,
-                "", "", "", "", "", "", "", "", "", ""],
-            ["", "", "", "", "", "", 0, "", "", "", "", "", "", "", "", "", ""],
+            *blank_transaction_rows,
         ],
         "A1",
         value_input_option="USER_ENTERED",
@@ -372,7 +390,9 @@ def _build_dashboard_layout(spreadsheet) -> None:
         _set_column_width(dashboard.id, 6, 9, 92),
         _set_column_width(dashboard.id, 9, 14, 110),
         _set_column_width(dashboard.id, 14, 17, 120),
-        _format_a1(spreadsheet, dashboard.id, "A1:Q30", "canvas", "dark"),
+        _format_a1(spreadsheet, dashboard.id, "A1:Q46", "canvas", "dark"),
+        _format_a1(spreadsheet, dashboard.id, "B6:Q44", "white",
+                   "dark", False, "CENTER", None, "CLIP"),
         _format_a1(spreadsheet, dashboard.id, "B1:Q1",
                    "green_dark", "white", True, "LEFT", 22),
         _format_a1(spreadsheet, dashboard.id, "B2:Q2",
@@ -439,7 +459,7 @@ def _build_dashboard_layout(spreadsheet) -> None:
         _format_borders(dashboard.id, "J11:M21"),
         _format_borders(dashboard.id, "O11:P19"),
         _format_borders(dashboard.id, "O5:P10"),
-        _format_borders(dashboard.id, "B23:H27"),
+        _format_borders(dashboard.id, f"B23:H{DASHBOARD_TRANSACTION_END_ROW}"),
         _format_borders(dashboard.id, "B3:C3"),
         _format_borders(dashboard.id, "F3:G3"),
         _format_borders(dashboard.id, "I3:J3"),
@@ -454,12 +474,16 @@ def _build_dashboard_layout(spreadsheet) -> None:
         _number_format(dashboard.id, "P3:P21", '"R$" #,##0.00'),
         _number_format(dashboard.id, "P13:P15", '"R$" #,##0.00'),
         _number_format(dashboard.id, "P18:P19", '"R$" #,##0.00'),
-        _number_format(dashboard.id, "G25:G27", '"R$" #,##0.00'),
-        _format_a1(spreadsheet, dashboard.id, "B6:Q27", "white",
-                   "dark", False, "CENTER", None, "CLIP"),
+        _number_format(
+            dashboard.id,
+            f"G{DASHBOARD_TRANSACTION_START_ROW}:G{DASHBOARD_TRANSACTION_END_ROW}",
+            '"R$" #,##0.00',
+        ),
     ]
     for worksheet in spreadsheet.worksheets():
-        if worksheet.title != "Dashboard":
+        if worksheet.title in VISIBLE_TABS:
+            requests.append(_show_sheet(worksheet.id))
+        else:
             requests.append(_hide_sheet(worksheet.id))
 
     spreadsheet.batch_update({"requests": requests})
@@ -476,6 +500,17 @@ def ensure_finance_sheet() -> None:
     if not _dashboard_has_template(dashboard):
         _build_dashboard_layout(spreadsheet)
     update_summary()
+
+
+def refresh_dashboard_layout() -> None:
+    if not is_configured():
+        return
+
+    spreadsheet = _spreadsheet()
+    _ensure_runtime_worksheets(spreadsheet)
+    _build_dashboard_layout(spreadsheet)
+    update_summary(spreadsheet)
+    _reorder_dashboard_first(spreadsheet)
 
 
 def reset_finance_template(delete_legacy: bool = True) -> None:
@@ -679,6 +714,7 @@ def update_summary(spreadsheet=None, worksheets=None) -> None:
     now = now_local()
     entradas = despesas = contas = parceladas = 0.0
     categorias: Dict[str, float] = {}
+    month_rows = []
     receitas_rows = []
     despesas_rows = []
     contas_rows = []
@@ -689,6 +725,7 @@ def update_summary(spreadsheet=None, worksheets=None) -> None:
         if not row_date or row_date.month != now.month or row_date.year != now.year:
             continue
 
+        month_rows.append(row)
         valor = _to_float(row.get("Valor", 0))
         tipo = str(row.get("Tipo", ""))
         categoria = str(row.get("Categoria", "Outros") or "Outros")
@@ -773,7 +810,7 @@ def update_summary(spreadsheet=None, worksheets=None) -> None:
             "despesas": despesas_rows,
             "contas": contas_rows,
             "parceladas": parceladas_rows,
-            "transacoes": rows,
+            "transacoes": month_rows,
         },
         worksheets=worksheets,
     )
@@ -929,8 +966,15 @@ def _update_dashboard(
             {"range": "P18:P19", "values": [[totals["despesas"] + totals["contas"]], [
                 totals["orcamento"] - totals["despesas"] - totals["contas"]]]},
             {
-                "range": "B25:H26",
-                "values": _latest_transaction_rows(spreadsheet, 2, transacoes),
+                "range": (
+                    f"B{DASHBOARD_TRANSACTION_START_ROW}:"
+                    f"H{DASHBOARD_TRANSACTION_END_ROW}"
+                ),
+                "values": _latest_transaction_rows(
+                    spreadsheet,
+                    DASHBOARD_TRANSACTION_LIMIT,
+                    transacoes,
+                ),
             },
         ],
         value_input_option="USER_ENTERED",

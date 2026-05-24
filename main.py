@@ -14,6 +14,7 @@ from api_client import get_last_save_error, save_to_api, get_month_summary
 from google_sheets_client import (
     ensure_finance_sheet,
     is_configured as google_sheet_configured,
+    refresh_dashboard_layout,
     reset_finance_template,
 )
 from state import (
@@ -728,6 +729,23 @@ def reset_sheet_template():
     return {
         "status": "ok",
         "message": "Template limpo. Abas antigas foram apagadas.",
+    }
+
+
+@app.api_route("/sheet/refresh-dashboard", methods=["GET", "POST"])
+def refresh_sheet_dashboard():
+    if not google_sheet_configured():
+        raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
+
+    try:
+        refresh_dashboard_layout()
+    except Exception as exc:
+        print(f"Erro ao atualizar dashboard: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return {
+        "status": "ok",
+        "message": "Dashboard atualizado sem apagar os lancamentos.",
     }
 
 
