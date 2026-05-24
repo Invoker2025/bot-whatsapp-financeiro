@@ -10,6 +10,9 @@ from time_utils import now_local
 
 
 LAST_SAVE_ERROR = ""
+SHEET_SAVE_ERRORS = 0
+SHEET_QUOTA_ERRORS = 0
+LAST_QUOTA_ERROR_AT = ""
 
 
 def _sanitize_error(exc: Exception) -> str:
@@ -28,6 +31,22 @@ def get_last_save_error() -> str:
     return LAST_SAVE_ERROR
 
 
+def _record_sheet_error(error: str) -> None:
+    global SHEET_SAVE_ERRORS, SHEET_QUOTA_ERRORS, LAST_QUOTA_ERROR_AT
+    SHEET_SAVE_ERRORS += 1
+    if "429" in error or "quota" in error.lower():
+        SHEET_QUOTA_ERRORS += 1
+        LAST_QUOTA_ERROR_AT = now_local().isoformat(timespec="seconds")
+
+
+def get_save_metrics() -> Dict[str, Any]:
+    return {
+        "sheet_save_errors": SHEET_SAVE_ERRORS,
+        "sheet_quota_errors": SHEET_QUOTA_ERRORS,
+        "last_quota_error_at": LAST_QUOTA_ERROR_AT,
+    }
+
+
 def _dashboard_api_base() -> str:
     if not PLANILHA_API_URL:
         return ""
@@ -39,7 +58,18 @@ def _dashboard_api_base() -> str:
 
 
 def _save_transactions(items: list[Dict[str, Any]]) -> bool:
+    db_saved = False
     sheet_saved = False
+
+    try:
+        for data in items:
+            save_transaction(data)
+        db_saved = True
+        print("Transacoes salvas no banco de dados.")
+    except Exception as exc:
+        error = f"Banco de dados: {_sanitize_error(exc)}"
+        _set_last_save_error(error)
+        print(f"Falha ao salvar no banco de dados: {error}")
 
     try:
         if append_transactions(items):
@@ -48,6 +78,7 @@ def _save_transactions(items: list[Dict[str, Any]]) -> bool:
     except Exception as exc:
         error = f"Google Sheets: {_sanitize_error(exc)}"
         _set_last_save_error(error)
+        _record_sheet_error(error)
         print(f"Falha ao salvar no Google Sheets: {error}")
 
     api_base = _dashboard_api_base()
@@ -66,11 +97,12 @@ def _save_transactions(items: list[Dict[str, Any]]) -> bool:
         except Exception as exc:
             error = f"Dashboard API: {_sanitize_error(exc)}"
             _set_last_save_error(error)
-            print(f"Falha ao salvar no dashboard, usando SQLite local: {error}")
+            print(f"Falha ao salvar no dashboard: {error}")
 
-    for data in items:
-        save_transaction(data)
-    return sheet_saved
+    if google_sheets_configured():
+        return sheet_saved
+
+    return db_saved
 
 
 def _normalize_transaction(data: Dict[str, Any]) -> Tuple[Dict[str, Any], int]:

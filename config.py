@@ -13,6 +13,9 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Fortaleza")
 # https://seu-dashboard.onrender.com/api
 PLANILHA_API_URL = os.getenv("PLANILHA_API_URL", "").rstrip("/")
 
+# Optional persistent database. Prefer a Postgres DATABASE_URL on Render.
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
 # Optional admin token for maintenance endpoints.
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
 

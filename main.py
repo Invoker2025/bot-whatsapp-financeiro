@@ -10,7 +10,8 @@ import unicodedata
 from typing import Optional
 
 from ai_parser import parse_message
-from api_client import get_last_save_error, save_to_api, get_month_summary
+from api_client import get_last_save_error, get_save_metrics, save_to_api, get_month_summary
+from db import check_connection, database_backend
 from google_sheets_client import (
     ensure_finance_sheet,
     is_configured as google_sheet_configured,
@@ -783,5 +784,8 @@ def sheet_status():
         "status": "ok",
         "google_sheet_configured": google_sheet_configured(),
         "timezone": APP_TIMEZONE,
+        "database_backend": database_backend(),
+        "database_ok": check_connection(),
         "last_save_error": get_last_save_error(),
+        "metrics": get_save_metrics(),
     }
