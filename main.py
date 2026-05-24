@@ -24,7 +24,13 @@ from state import (
     mark_reminder_sent,
     set_pending,
 )
-from config import APP_TIMEZONE, OPENAI_API_KEY, PENDING_REMINDER_SECONDS, WHATSAPP_VERIFY_TOKEN
+from config import (
+    ADMIN_TOKEN,
+    APP_TIMEZONE,
+    OPENAI_API_KEY,
+    PENDING_REMINDER_SECONDS,
+    WHATSAPP_VERIFY_TOKEN,
+)
 from twilio_whatsapp import (
     build_twiml_message,
     normalize_twilio_whatsapp_id,
@@ -715,8 +721,19 @@ def setup_sheet():
     return {"status": "ok", "message": "Planilha configurada"}
 
 
-@app.api_route("/sheet/reset-template", methods=["GET", "POST"])
-def reset_sheet_template():
+def require_admin_token(request: Request) -> None:
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="ADMIN_TOKEN nao configurado")
+
+    token = request.headers.get("x-admin-token") or request.query_params.get("token")
+    if token != ADMIN_TOKEN:
+        raise HTTPException(status_code=403, detail="Admin token invalido")
+
+
+@app.post("/sheet/reset-template")
+def reset_sheet_template(request: Request):
+    require_admin_token(request)
+
     if not google_sheet_configured():
         raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
 
@@ -732,8 +749,10 @@ def reset_sheet_template():
     }
 
 
-@app.api_route("/sheet/refresh-dashboard", methods=["GET", "POST"])
-def refresh_sheet_dashboard():
+@app.post("/sheet/refresh-dashboard")
+def refresh_sheet_dashboard(request: Request):
+    require_admin_token(request)
+
     if not google_sheet_configured():
         raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
 

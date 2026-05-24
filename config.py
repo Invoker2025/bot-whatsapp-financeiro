@@ -13,6 +13,9 @@ APP_TIMEZONE = os.getenv("APP_TIMEZONE", "America/Fortaleza")
 # https://seu-dashboard.onrender.com/api
 PLANILHA_API_URL = os.getenv("PLANILHA_API_URL", "").rstrip("/")
 
+# Optional admin token for maintenance endpoints.
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+
 # Google Sheets settings. Create/share a sheet and paste its ID here.
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 GOOGLE_SERVICE_ACCOUNT_FILE = os.getenv(
