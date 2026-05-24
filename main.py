@@ -346,7 +346,6 @@ def is_numeric_only_message(text: str) -> bool:
 # ======================================================
 
 
-@app.post("/message")
 def receive_message(msg: Message):
     user_id = msg.user_id
     pending = get_pending(user_id)
@@ -572,6 +571,12 @@ def receive_message(msg: Message):
         print(f"Erro: {e}")
         return {"reply": "❌ Erro interno. Tente novamente."}
 
+@app.post("/message")
+def receive_message_endpoint(msg: Message, request: Request):
+    require_admin_token(request)
+    return receive_message(msg)
+
+
 # ======================================================
 # WHATSAPP CLOUD API
 # ======================================================
@@ -670,7 +675,9 @@ async def receive_twilio_whatsapp(request: Request):
 
 
 @app.post("/audio")
-async def transcribe_audio(audio: UploadFile = File(...)):
+async def transcribe_audio(request: Request, audio: UploadFile = File(...)):
+    require_admin_token(request)
+
     if not client:
         return {"error": "OpenAI API key não configurada"}
 
@@ -707,8 +714,10 @@ def root():
     }
 
 
-@app.api_route("/sheet/setup", methods=["GET", "POST"])
-def setup_sheet():
+@app.post("/sheet/setup")
+def setup_sheet(request: Request):
+    require_admin_token(request)
+
     if not google_sheet_configured():
         raise HTTPException(status_code=400, detail="GOOGLE_SHEET_ID nao configurado")
 
