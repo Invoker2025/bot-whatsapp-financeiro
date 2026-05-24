@@ -98,7 +98,7 @@ def _spreadsheet():
     return _client().open_by_key(GOOGLE_SHEET_ID)
 
 
-def _worksheet(spreadsheet, title: str, headers: List[str]):
+def _worksheet(spreadsheet, title: str, headers: List[str], validate_headers: bool = True):
     try:
         worksheet = spreadsheet.worksheet(title)
     except gspread.WorksheetNotFound:
@@ -107,7 +107,7 @@ def _worksheet(spreadsheet, title: str, headers: List[str]):
         worksheet = spreadsheet.add_worksheet(
             title=title, rows=rows, cols=cols)
 
-    if headers:
+    if validate_headers and headers:
         current_headers = worksheet.row_values(1)
         if current_headers != headers:
             worksheet.update(
@@ -115,6 +115,24 @@ def _worksheet(spreadsheet, title: str, headers: List[str]):
             _format_header(spreadsheet, worksheet.id, len(headers))
 
     return worksheet
+
+
+def _ensure_runtime_worksheets(spreadsheet):
+    worksheets = {worksheet.title: worksheet for worksheet in spreadsheet.worksheets()}
+
+    for title, headers in TAB_DEFINITIONS.items():
+        if title in worksheets:
+            continue
+
+        rows = 120 if title == "Dashboard" else 200
+        cols = 18 if title == "Dashboard" else max(len(headers), 8)
+        worksheet = spreadsheet.add_worksheet(title=title, rows=rows, cols=cols)
+        worksheets[title] = worksheet
+        if headers:
+            worksheet.update([headers], "A1", value_input_option="USER_ENTERED")
+            _format_header(spreadsheet, worksheet.id, len(headers))
+
+    return worksheets
 
 
 def _format_header(spreadsheet, sheet_id: int, column_count: int) -> None:
@@ -545,44 +563,59 @@ def _seed_template_rows(spreadsheet) -> None:
 
 
 def append_transaction(data: Dict[str, Any]) -> bool:
+    return append_transactions([data])
+
+
+def append_transactions(items: List[Dict[str, Any]]) -> bool:
     if not is_configured():
         return False
 
-    spreadsheet = _spreadsheet()
-    for title, headers in TAB_DEFINITIONS.items():
-        _worksheet(spreadsheet, title, headers)
+    if not items:
+        return True
 
-    normalized = _normalize_transaction(data)
-    spreadsheet.worksheet("Transacoes").append_row(
+    spreadsheet = _spreadsheet()
+    worksheets = _ensure_runtime_worksheets(spreadsheet)
+    normalized_items = [_normalize_transaction(data) for data in items]
+
+    worksheets["Transacoes"].append_rows(
         [
-            normalized["data"],
-            normalized["tipo"],
-            normalized["descricao"],
-            normalized["categoria"],
-            normalized["subcategoria"],
-            normalized["meio_pagamento"],
-            normalized["valor"],
-            normalized["parcelado"],
-            normalized["parcela_atual"],
-            normalized["total_parcelas"],
-            normalized["origem"],
+            [
+                normalized["data"],
+                normalized["tipo"],
+                normalized["descricao"],
+                normalized["categoria"],
+                normalized["subcategoria"],
+                normalized["meio_pagamento"],
+                normalized["valor"],
+                normalized["parcelado"],
+                normalized["parcela_atual"],
+                normalized["total_parcelas"],
+                normalized["origem"],
+            ]
+            for normalized in normalized_items
         ],
         value_input_option="USER_ENTERED",
     )
 
-    if normalized["tipo"] == "Receita":
-        spreadsheet.worksheet("Receitas").append_row(
-            [
-                normalized["data"],
-                normalized["descricao"],
-                normalized["valor"],
-                normalized["meio_pagamento"],
-                normalized["origem"],
-            ],
-            value_input_option="USER_ENTERED",
-        )
-    else:
-        spreadsheet.worksheet("Despesas").append_row(
+    receitas = []
+    despesas = []
+    contas = []
+    parceladas = []
+
+    for normalized in normalized_items:
+        if normalized["tipo"] == "Receita":
+            receitas.append(
+                [
+                    normalized["data"],
+                    normalized["descricao"],
+                    normalized["valor"],
+                    normalized["meio_pagamento"],
+                    normalized["origem"],
+                ]
+            )
+            continue
+
+        despesas.append(
             [
                 normalized["data"],
                 normalized["descricao"],
@@ -592,24 +625,22 @@ def append_transaction(data: Dict[str, Any]) -> bool:
                 normalized["valor"],
                 _parcel_label(normalized),
                 "pago",
-            ],
-            value_input_option="USER_ENTERED",
+            ]
         )
 
         if normalized["categoria"] == "Contas":
-            spreadsheet.worksheet("Contas").append_row(
+            contas.append(
                 [
                     normalized["data"],
                     normalized["descricao"],
                     normalized["categoria"],
                     normalized["valor"],
                     "pago",
-                ],
-                value_input_option="USER_ENTERED",
+                ]
             )
 
         if normalized["parcelado"] == "Sim":
-            spreadsheet.worksheet("Parceladas").append_row(
+            parceladas.append(
                 [
                     normalized["data"],
                     normalized["descricao"],
@@ -617,26 +648,41 @@ def append_transaction(data: Dict[str, Any]) -> bool:
                     normalized["valor"],
                     _parcel_label(normalized),
                     normalized["meio_pagamento"],
-                ],
-                value_input_option="USER_ENTERED",
+                ]
             )
 
-    update_summary(spreadsheet)
+    if receitas:
+        worksheets["Receitas"].append_rows(receitas, value_input_option="USER_ENTERED")
+    if despesas:
+        worksheets["Despesas"].append_rows(despesas, value_input_option="USER_ENTERED")
+    if contas:
+        worksheets["Contas"].append_rows(contas, value_input_option="USER_ENTERED")
+    if parceladas:
+        worksheets["Parceladas"].append_rows(
+            parceladas, value_input_option="USER_ENTERED"
+        )
+
+    update_summary(spreadsheet, worksheets=worksheets)
     return True
 
 
-def update_summary(spreadsheet=None) -> None:
+def update_summary(spreadsheet=None, worksheets=None) -> None:
     if not is_configured():
         return
 
     spreadsheet = spreadsheet or _spreadsheet()
-    resumo = _worksheet(spreadsheet, "Resumo", [])
-    transacoes = _worksheet(spreadsheet, "Transacoes", TRANSACTIONS_HEADERS)
+    worksheets = worksheets or _ensure_runtime_worksheets(spreadsheet)
+    resumo = worksheets["Resumo"]
+    transacoes = worksheets["Transacoes"]
     rows = transacoes.get_all_records()
 
     now = now_local()
     entradas = despesas = contas = parceladas = 0.0
     categorias: Dict[str, float] = {}
+    receitas_rows = []
+    despesas_rows = []
+    contas_rows = []
+    parceladas_rows = []
 
     for row in rows:
         row_date = _parse_date(str(row.get("Data", "")))
@@ -649,20 +695,23 @@ def update_summary(spreadsheet=None) -> None:
 
         if tipo == "Receita":
             entradas += valor
+            receitas_rows.append(row)
         else:
             if categoria == "Contas":
                 contas += valor
+                contas_rows.append(row)
             else:
                 despesas += valor
+                despesas_rows.append(row)
 
             if str(row.get("Parcelado", "")) == "Sim":
                 parceladas += valor
+                parceladas_rows.append(row)
 
             categorias[categoria] = categorias.get(categoria, 0.0) + valor
 
     saldo = entradas - despesas - contas
-    _update_category_sheet(spreadsheet, categorias)
-    category_rows = _get_category_rows(spreadsheet)
+    category_rows = _sync_category_sheet(worksheets["Categorias"], categorias)
     resumo.clear()
     resumo.update(
         [
@@ -719,26 +768,50 @@ def update_summary(spreadsheet=None) -> None:
             "orcamento": sum(row["orcamento"] for row in category_rows),
             "categorias": category_rows,
         },
+        records={
+            "receitas": receitas_rows,
+            "despesas": despesas_rows,
+            "contas": contas_rows,
+            "parceladas": parceladas_rows,
+            "transacoes": rows,
+        },
+        worksheets=worksheets,
     )
 
 
-def _update_category_sheet(spreadsheet, categorias: Dict[str, float]) -> None:
-    worksheet = _worksheet(spreadsheet, "Categorias", CATEGORIAS_HEADERS)
+def _sync_category_sheet(worksheet, categorias: Dict[str, float]) -> List[Dict[str, Any]]:
     records = worksheet.get_all_records()
     if not records:
-        return
+        return []
 
     updates = []
+    rows = []
     for index, row in enumerate(records, start=2):
         categoria = str(row.get("Categoria", "")).strip()
         orcamento = _to_float(row.get("Orcamento", 0))
         real = round(categorias.get(categoria, 0.0), 2)
         sobra = round(orcamento - real, 2)
         updates.append([real, sobra])
+        if categoria:
+            rows.append(
+                {
+                    "categoria": categoria,
+                    "orcamento": orcamento,
+                    "real": real,
+                    "sobra": sobra,
+                }
+            )
 
     if updates:
         worksheet.update(
             updates, f"C2:D{len(updates) + 1}", value_input_option="USER_ENTERED")
+
+    return rows
+
+
+def _update_category_sheet(spreadsheet, categorias: Dict[str, float]) -> None:
+    worksheet = _worksheet(spreadsheet, "Categorias", CATEGORIAS_HEADERS)
+    _sync_category_sheet(worksheet, categorias)
 
 
 def _get_category_rows(spreadsheet) -> List[Dict[str, Any]]:
@@ -761,22 +834,50 @@ def _get_category_rows(spreadsheet) -> List[Dict[str, Any]]:
     return rows
 
 
-def _latest_records(spreadsheet, worksheet_name: str, limit: int) -> List[Dict[str, Any]]:
-    worksheet = _worksheet(spreadsheet, worksheet_name,
-                           TAB_DEFINITIONS.get(worksheet_name, []))
+def _latest_records(
+    spreadsheet,
+    worksheet_name: str,
+    limit: int,
+    worksheets=None,
+) -> List[Dict[str, Any]]:
+    worksheet = (
+        worksheets.get(worksheet_name)
+        if worksheets
+        else _worksheet(spreadsheet, worksheet_name, TAB_DEFINITIONS.get(worksheet_name, []))
+    )
     records = worksheet.get_all_records()
     return records[-limit:] if records else []
 
 
-def _update_dashboard(spreadsheet, totals: Dict[str, Any]) -> None:
-    dashboard = _worksheet(spreadsheet, "Dashboard", [])
-    if not _dashboard_has_template(dashboard):
+def _update_dashboard(
+    spreadsheet,
+    totals: Dict[str, Any],
+    records: Dict[str, List[Dict[str, Any]]] = None,
+    worksheets=None,
+) -> None:
+    dashboard = worksheets.get("Dashboard") if worksheets else _worksheet(
+        spreadsheet, "Dashboard", [], validate_headers=False
+    )
+    if not dashboard:
+        _build_dashboard_layout(spreadsheet)
+        dashboard = _worksheet(spreadsheet, "Dashboard", [], validate_headers=False)
+    elif not worksheets and not _dashboard_has_template(dashboard):
         _build_dashboard_layout(spreadsheet)
 
-    receitas = _latest_records(spreadsheet, "Receitas", 2)
-    despesas = _latest_records(spreadsheet, "Despesas", 2)
-    contas = _latest_records(spreadsheet, "Contas", 2)
-    parceladas = _latest_records(spreadsheet, "Parceladas", 1)
+    records = records or {}
+    receitas = records["receitas"] if "receitas" in records else _latest_records(
+        spreadsheet, "Receitas", 2, worksheets
+    )
+    despesas = records["despesas"] if "despesas" in records else _latest_records(
+        spreadsheet, "Despesas", 2, worksheets
+    )
+    contas = records["contas"] if "contas" in records else _latest_records(
+        spreadsheet, "Contas", 2, worksheets
+    )
+    parceladas = records["parceladas"] if "parceladas" in records else _latest_records(
+        spreadsheet, "Parceladas", 1, worksheets
+    )
+    transacoes = records.get("transacoes")
     categorias = totals.get("categorias", [])[:8]
 
     dashboard.batch_update(
@@ -829,7 +930,7 @@ def _update_dashboard(spreadsheet, totals: Dict[str, Any]) -> None:
                 totals["orcamento"] - totals["despesas"] - totals["contas"]]]},
             {
                 "range": "B25:H26",
-                "values": _latest_transaction_rows(spreadsheet, 2),
+                "values": _latest_transaction_rows(spreadsheet, 2, transacoes),
             },
         ],
         value_input_option="USER_ENTERED",
@@ -897,8 +998,10 @@ def _parcel_rows(records):
     return [[record.get("Descricao", ""), _to_float(record.get("Valor", 0))], ["", 0]]
 
 
-def _latest_transaction_rows(spreadsheet, limit):
-    records = _latest_records(spreadsheet, "Transacoes", limit)
+def _latest_transaction_rows(spreadsheet, limit, records=None):
+    records = records if records is not None else _latest_records(
+        spreadsheet, "Transacoes", limit
+    )
     output = []
     for record in records[-limit:]:
         output.append(

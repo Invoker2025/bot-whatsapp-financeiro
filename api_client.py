@@ -5,7 +5,7 @@ from dateutil.relativedelta import relativedelta
 
 from config import PLANILHA_API_URL
 from db import get_month_summary_db, save_transaction
-from google_sheets_client import append_transaction, is_configured as google_sheets_configured
+from google_sheets_client import append_transactions, is_configured as google_sheets_configured
 from time_utils import now_local
 
 
@@ -38,13 +38,13 @@ def _dashboard_api_base() -> str:
     return base
 
 
-def _save_transaction(data: Dict[str, Any]) -> bool:
+def _save_transactions(items: list[Dict[str, Any]]) -> bool:
     sheet_saved = False
 
     try:
-        if append_transaction(data):
+        if append_transactions(items):
             sheet_saved = True
-            print("Transacao salva no Google Sheets.")
+            print("Transacoes salvas no Google Sheets.")
     except Exception as exc:
         error = f"Google Sheets: {_sanitize_error(exc)}"
         _set_last_save_error(error)
@@ -54,12 +54,13 @@ def _save_transaction(data: Dict[str, Any]) -> bool:
 
     if api_base:
         try:
-            response = requests.post(
-                f"{api_base}/transactions",
-                json=data,
-                timeout=15,
-            )
-            response.raise_for_status()
+            for data in items:
+                response = requests.post(
+                    f"{api_base}/transactions",
+                    json=data,
+                    timeout=15,
+                )
+                response.raise_for_status()
             print("Transacao salva no dashboard.")
             return sheet_saved
         except Exception as exc:
@@ -67,7 +68,8 @@ def _save_transaction(data: Dict[str, Any]) -> bool:
             _set_last_save_error(error)
             print(f"Falha ao salvar no dashboard, usando SQLite local: {error}")
 
-    save_transaction(data)
+    for data in items:
+        save_transaction(data)
     return sheet_saved
 
 
@@ -110,7 +112,7 @@ def save_to_api(data: Dict[str, Any]) -> bool:
         _set_last_save_error("")
         transaction_base, total_parcelas = _normalize_transaction(data)
         print("Salvando transacao financeira.")
-        sheet_results = []
+        transactions = []
 
         if total_parcelas > 1:
             valor_parcela = transaction_base["valor"] / total_parcelas
@@ -131,9 +133,10 @@ def save_to_api(data: Dict[str, Any]) -> bool:
                         ),
                     }
                 )
-                sheet_results.append(_save_transaction(parcela_data))
+                transactions.append(parcela_data)
 
-            return all(sheet_results) if google_sheets_configured() else True
+            saved = _save_transactions(transactions)
+            return saved if google_sheets_configured() else True
 
         transaction_base.update(
             {
@@ -142,8 +145,8 @@ def save_to_api(data: Dict[str, Any]) -> bool:
                 "data": now_local().strftime("%Y-%m-%dT%H:%M:%S.%f"),
             }
         )
-        sheet_results.append(_save_transaction(transaction_base))
-        return all(sheet_results) if google_sheets_configured() else True
+        saved = _save_transactions([transaction_base])
+        return saved if google_sheets_configured() else True
 
     except Exception as exc:
         error = f"Salvar transacao: {_sanitize_error(exc)}"
