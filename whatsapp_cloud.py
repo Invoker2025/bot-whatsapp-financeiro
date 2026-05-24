@@ -14,7 +14,8 @@ from config import (
 
 def verify_signature(raw_body: bytes, signature_header: Optional[str]) -> bool:
     if not WHATSAPP_APP_SECRET:
-        return True
+        print("WHATSAPP_APP_SECRET nao configurado; assinatura Cloud rejeitada.")
+        return False
 
     if not signature_header or not signature_header.startswith("sha256="):
         return False

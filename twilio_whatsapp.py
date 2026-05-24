@@ -33,7 +33,8 @@ def verify_twilio_signature(
     signature_header: Optional[str],
 ) -> bool:
     if not TWILIO_AUTH_TOKEN:
-        return True
+        print("TWILIO_AUTH_TOKEN nao configurado; assinatura Twilio rejeitada.")
+        return False
 
     if not signature_header:
         return False
