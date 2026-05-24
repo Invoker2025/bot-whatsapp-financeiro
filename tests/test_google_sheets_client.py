@@ -85,3 +85,13 @@ def test_latest_transaction_rows_fill_dashboard_limit():
     assert len(rows) == 3
     assert rows[0][-1] == "1/2"
     assert rows[1][2] == ""
+    assert rows[1][5] == ""
+
+
+def test_empty_dashboard_rows_do_not_show_zero_values():
+    assert sheets._two_col_records([], "Descricao", "Valor", "Sem receitas", 2) == [
+        ["Sem receitas", ""],
+        ["", ""],
+    ]
+    assert sheets._parcel_rows([]) == [["Sem parcelas", ""], ["", ""]]
+    assert sheets._latest_transaction_rows(None, 1, [])[0][5] == ""

@@ -62,6 +62,7 @@ DASHBOARD_TRANSACTION_END_ROW = (
     DASHBOARD_TRANSACTION_START_ROW + DASHBOARD_TRANSACTION_LIMIT - 1
 )
 VISIBLE_TABS = {"Dashboard", "Transacoes", "Receitas", "Despesas", "Parceladas"}
+BLANK = ""
 
 LEGACY_TABS = {
     "Dashboard",
@@ -308,7 +309,7 @@ def _build_dashboard_layout(spreadsheet) -> None:
     dashboard = _worksheet(spreadsheet, "Dashboard", [])
     dashboard.clear()
     blank_transaction_rows = [
-        ["", "", "", "Sem lançamentos" if index == 0 else "", "", "", 0,
+        ["", "", "", "Sem lançamentos" if index == 0 else "", "", "", BLANK,
             "", "", "", "", "", "", "", "", "", ""]
         for index in range(DASHBOARD_TRANSACTION_LIMIT)
     ]
@@ -320,42 +321,42 @@ def _build_dashboard_layout(spreadsheet) -> None:
             ["", "Dashboard financeiro automático", "", "", "",
                 "", "", "", "", "", "", "", "", "", "", "", ""],
             ["", "Mês", now_local().strftime("%m/%Y"), "", "", "Entradas",
-             0, "", "Despesas", 0, "", "Saldo", 0, "", "Orçamento", 0, ""],
+             BLANK, "", "Despesas", BLANK, "", "Saldo", BLANK, "", "Orçamento", 0, ""],
             ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""],
             ["", "Receitas", "", "", "", "Metas", "", "", "",
                 "Dívidas", "", "", "", "", "Resumo", "", ""],
             ["", "Descrição", "Valor", "", "", "Descrição", "Valor", "Status", "",
                 "Descrição", "Data", "Parcela", "Valor", "Status", "Este mês", ""],
-            ["", "Sem receitas", 0, "", "", "Reserva de Emergência", 0,
-                "pendente", "", "Sem dívidas", "", "", 0, "pendente", "Entradas", 0],
-            ["", "", 0, "", "", "Viagem de fim de ano", 0,
-                "pendente", "", "", "", "", "", "", "Contas", 0],
-            ["", "Total", 0, "", "", "Total", 0, "", "",
-                "Total", "", "", 0, "", "Despesas", 0],
+            ["", "Sem receitas", BLANK, "", "", "Reserva de Emergência", BLANK,
+                "pendente", "", "Sem dívidas", "", "", BLANK, "pendente", "Entradas", BLANK],
+            ["", "", BLANK, "", "", "Viagem de fim de ano", BLANK,
+                "pendente", "", "", "", "", "", "", "Contas", BLANK],
+            ["", "Total", BLANK, "", "", "Total", BLANK, "", "",
+                "Total", "", "", BLANK, "", "Despesas", BLANK],
             ["", "", "", "", "", "", "", "", "",
-                "", "", "", "", "", "Saldo", 0, ""],
+                "", "", "", "", "", "Saldo", BLANK, ""],
             ["", "Contas", "", "", "", "", "", "", "",
                 "Categorias", "", "", "", "", "Parceladas", "", ""],
             ["", "Descrição", "Data", "Categoria", "Valor", "Status", "", "", "",
                 "Categoria", "Orçamento", "Real Gasto", "Sobra", "", "Descrição", "Valor", ""],
-            ["", "Sem contas", "", "", 0, "pendente", "", "", "",
-                "Moradia", 2200, 0, 2200, "", "Sem parcelas", 0, ""],
-            ["", "", "", "", 0, "", "", "", "",
-                "Alimentação", 600, 0, 600, "", "", 0, ""],
-            ["", "Total", "", "", 0, "", "", "", "",
-                "Mercado", 600, 0, 600, "", "Total", 0, ""],
+            ["", "Sem contas", "", "", BLANK, "pendente", "", "", "",
+                "Moradia", 2200, BLANK, 2200, "", "Sem parcelas", BLANK, ""],
+            ["", "", "", "", BLANK, "", "", "", "",
+                "Alimentação", 600, BLANK, 600, "", "", BLANK, ""],
+            ["", "Total", "", "", BLANK, "", "", "", "",
+                "Mercado", 600, BLANK, 600, "", "Total", BLANK, ""],
             ["", "", "", "", "", "", "", "", "",
-                "Transporte", 300, 0, 300, "", "", "", ""],
+                "Transporte", 300, BLANK, 300, "", "", "", ""],
             ["", "Despesas", "", "", "", "", "", "", "",
-                "Lazer", 200, 0, 200, "", "", "", ""],
+                "Lazer", 200, BLANK, 200, "", "", "", ""],
             ["", "Descrição", "Data", "Forma", "Categoria", "Valor",
-                "", "", "", "Saúde", 200, 0, 200, "", "Gasto", 0, ""],
-            ["", "Sem despesas", "", "", "", 0, "", "", "",
-                "Shopping", 200, 0, 200, "", "Sobra", 0, ""],
-            ["", "", "", "", "", 0, "", "", "",
-                "Outros", 300, 0, 300, "", "", "", ""],
-            ["", "Total", "", "", "", 0, "", "", "",
-                "Total", 4600, 0, 4600, "", "", "", ""],
+                "", "", "", "Saúde", 200, BLANK, 200, "", "Gasto", BLANK, ""],
+            ["", "Sem despesas", "", "", "", BLANK, "", "", "",
+                "Shopping", 200, BLANK, 200, "", "Sobra", BLANK, ""],
+            ["", "", "", "", "", BLANK, "", "", "",
+                "Outros", 300, BLANK, 300, "", "", "", ""],
+            ["", "Total", "", "", "", BLANK, "", "", "",
+                "Total", 4600, BLANK, 4600, "", "", "", ""],
             [],
             ["", "Últimas transações", "", "", "", "", "",
                 "", "", "", "", "", "", "", "", "", ""],
@@ -920,51 +921,51 @@ def _update_dashboard(
     dashboard.batch_update(
         [
             {"range": "C3", "values": [[now_local().strftime("%m/%Y")]]},
-            {"range": "G3", "values": [[totals["entradas"]]]},
+            {"range": "G3", "values": [[_display_money(totals["entradas"])]]},
             {"range": "J3", "values": [
-                [totals["despesas"] + totals["contas"]]]},
-            {"range": "M3", "values": [[totals["saldo"]]]},
+                [_display_money(totals["despesas"] + totals["contas"])]]},
+            {"range": "M3", "values": [[_display_money(totals["saldo"])]]},
             {"range": "P3", "values": [[totals["orcamento"]]]},
             {
                 "range": "B7:C8",
                 "values": _two_col_records(receitas, "Descricao", "Valor", "Sem receitas", 2),
             },
-            {"range": "B9:C9", "values": [["Total", totals["entradas"]]]},
+            {"range": "B9:C9", "values": [["Total", _display_money(totals["entradas"])]]},
             {
                 "range": "B13:F14",
                 "values": _account_rows(contas, 2),
             },
             {"range": "B15:F15", "values": [
-                ["Total", "", "", totals["contas"], ""]]},
+                ["Total", "", "", _display_money(totals["contas"]), ""]]},
             {
                 "range": "B19:F20",
                 "values": _expense_rows(despesas, 2),
             },
             {"range": "B21:F21", "values": [
-                ["Total", "", "", "", totals["despesas"]]]},
+                ["Total", "", "", "", _display_money(totals["despesas"])]]},
             {
                 "range": "J13:M20",
                 "values": _dashboard_category_rows(categorias, 8),
             },
-            {"range": "J21:M21", "values": [["Total", totals["orcamento"], totals["despesas"] +
-                                             totals["contas"], totals["orcamento"] - totals["despesas"] - totals["contas"]]]},
+            {"range": "J21:M21", "values": [["Total", totals["orcamento"], _display_money(totals["despesas"] +
+                                             totals["contas"]), _display_money(totals["orcamento"] - totals["despesas"] - totals["contas"])]]},
             {
                 "range": "O13:P14",
                 "values": _parcel_rows(parceladas),
             },
-            {"range": "O15:P15", "values": [["Total", totals["parceladas"]]]},
+            {"range": "O15:P15", "values": [["Total", _display_money(totals["parceladas"])]]},
             {
                 "range": "O6:P10",
                 "values": [
                     ["Este mês", ""],
-                    ["Entradas", totals["entradas"]],
-                    ["Contas", totals["contas"]],
-                    ["Despesas", totals["despesas"]],
-                    ["Saldo", totals["saldo"]],
+                    ["Entradas", _display_money(totals["entradas"])],
+                    ["Contas", _display_money(totals["contas"])],
+                    ["Despesas", _display_money(totals["despesas"])],
+                    ["Saldo", _display_money(totals["saldo"])],
                 ],
             },
-            {"range": "P18:P19", "values": [[totals["despesas"] + totals["contas"]], [
-                totals["orcamento"] - totals["despesas"] - totals["contas"]]]},
+            {"range": "P18:P19", "values": [[_display_money(totals["despesas"] + totals["contas"])], [
+                _display_money(totals["orcamento"] - totals["despesas"] - totals["contas"])]]},
             {
                 "range": (
                     f"B{DASHBOARD_TRANSACTION_START_ROW}:"
@@ -985,9 +986,9 @@ def _two_col_records(records, first_key, second_key, empty_label, limit):
     output = []
     for record in records[-limit:]:
         output.append([record.get(first_key, ""),
-                      _to_float(record.get(second_key, 0))])
+                      _display_money(_to_float(record.get(second_key, 0)))])
     while len(output) < limit:
-        output.append([empty_label if not output else "", 0])
+        output.append([empty_label if not output else "", BLANK])
     return output
 
 
@@ -999,12 +1000,12 @@ def _account_rows(records, limit):
                 record.get("Descricao", ""),
                 record.get("Data", ""),
                 record.get("Categoria", ""),
-                _to_float(record.get("Valor", 0)),
+                _display_money(_to_float(record.get("Valor", 0))),
                 record.get("Status", ""),
             ]
         )
     while len(output) < limit:
-        output.append(["Sem contas" if not output else "", "", "", 0, ""])
+        output.append(["Sem contas" if not output else "", "", "", BLANK, ""])
     return output
 
 
@@ -1017,29 +1018,35 @@ def _expense_rows(records, limit):
                 record.get("Data", ""),
                 record.get("Meio", ""),
                 record.get("Categoria", ""),
-                _to_float(record.get("Valor", 0)),
+                _display_money(_to_float(record.get("Valor", 0))),
             ]
         )
     while len(output) < limit:
-        output.append(["Sem despesas" if not output else "", "", "", "", 0])
+        output.append(["Sem despesas" if not output else "", "", "", "", BLANK])
     return output
 
 
 def _dashboard_category_rows(rows, limit):
     output = []
     for row in rows[:limit]:
-        output.append([row["categoria"], row["orcamento"],
-                      row["real"], row["sobra"]])
+        output.append(
+            [
+                row["categoria"],
+                _display_money(row["orcamento"], blank_zero=False),
+                _display_money(row["real"]),
+                _display_money(row["sobra"]),
+            ]
+        )
     while len(output) < limit:
-        output.append(["", 0, 0, 0])
+        output.append(["", BLANK, BLANK, BLANK])
     return output
 
 
 def _parcel_rows(records):
     if not records:
-        return [["Sem parcelas", 0], ["", 0]]
+        return [["Sem parcelas", BLANK], ["", BLANK]]
     record = records[-1]
-    return [[record.get("Descricao", ""), _to_float(record.get("Valor", 0))], ["", 0]]
+    return [[record.get("Descricao", ""), _display_money(_to_float(record.get("Valor", 0)))], ["", BLANK]]
 
 
 def _latest_transaction_rows(spreadsheet, limit, records=None):
@@ -1055,14 +1062,14 @@ def _latest_transaction_rows(spreadsheet, limit, records=None):
                 record.get("Descricao", ""),
                 record.get("Categoria", ""),
                 record.get("Meio", ""),
-                _to_float(record.get("Valor", 0)),
+                _display_money(_to_float(record.get("Valor", 0))),
                 _parcel_display(record),
             ]
         )
 
     while len(output) < limit:
         output.append(
-            ["", "", "Sem lançamentos" if not output else "", "", "", 0, ""])
+            ["", "", "Sem lançamentos" if not output else "", "", "", BLANK, ""])
     return output
 
 
@@ -1121,6 +1128,13 @@ def _normalize_text(value: Any) -> str:
 
 def _is_credit_payment(meio: str) -> bool:
     return meio.startswith("cr") or "credito" in meio or "cartao" in meio
+
+
+def _display_money(value: Any, blank_zero: bool = True):
+    amount = _to_float(value)
+    if blank_zero and abs(amount) < 0.005:
+        return BLANK
+    return round(amount, 2)
 
 
 def _parse_date(value: str):
